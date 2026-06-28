@@ -165,7 +165,7 @@
   function enableVideo() { videoOn = true; document.body.classList.add('has-video'); }
   bgvideo.addEventListener('loadeddata', enableVideo);
   bgvideo.addEventListener('error', () => { /* không có bg.mp4 -> giữ nền Aurora */ });
-  bgvideo.src = 'assets/video/bg.mp4'; // tự dùng nếu bạn đã thả file vào
+  bgvideo.src = 'assets/video/bg-web.mp4'; // bản nhẹ H.264 (commit lên repo); bg.mp4 gốc giữ ở local
   videoInput.addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
     bgvideo.src = URL.createObjectURL(f); enableVideo();
