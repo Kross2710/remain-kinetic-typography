@@ -113,10 +113,9 @@
       else if (st === 'future') { for (let j = 0; j < chars.length; j++) chars[j].style.setProperty('--cp', '0'); }
       el.classList.remove('is-current', 'is-emph');
       if (st === 'current') {
+        // KHÔNG pop scale nữa (tránh giật) — chỉ đổi class để lên quầng sáng mượt qua CSS transition.
         el.classList.add('is-current');
-        const emph = EMPH.has(normWord(el.textContent));
-        if (emph) { el.classList.add('is-emph'); gsap.fromTo(el, { scale: 0.82 }, { scale: 1, duration: 0.55, ease: 'back.out(1.7)', overwrite: 'auto' }); }
-        else { gsap.fromTo(el, { scale: 0.97 }, { scale: 1, duration: 0.3, ease: 'power2.out', overwrite: 'auto' }); }
+        if (EMPH.has(normWord(el.textContent))) el.classList.add('is-emph');
       }
     }
   }
