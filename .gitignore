@@ -1,0 +1,13 @@
+# OS junk
+.DS_Store
+**/.DS_Store
+
+# Video nền: file nặng, vượt giới hạn 100MB của GitHub & không hợp GitHub Pages.
+# (Bản deploy sẽ tự fallback về nền Aurora. Giữ video ở local thôi.)
+assets/video/*.mp4
+assets/video/*.mov
+assets/video/*.webm
+assets/video/*.m4v
+
+# scratch
+*.log

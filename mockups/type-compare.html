@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Type compare — Aurora</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300;0,9..144,400;1,9..144,300;1,9..144,400&family=Hanken+Grotesk:wght@200;300;400&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet" />
+<style>
+  :root{
+    --base:#0B0E16; --ink:#EAEDF5; --accent:#F2C98A;
+    --warm1:#6E3B4E; --warm2:#C98A5E;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{background:#14161c;color:var(--ink);
+    font-family:'Hanken Grotesk',system-ui,sans-serif;
+    padding:30px;display:flex;flex-direction:column;align-items:center;gap:22px;}
+  h1{font-weight:300;font-size:18px;letter-spacing:.04em;color:#aab0c2;text-align:center;}
+  h1 b{color:var(--ink);font-weight:400;}
+  .row{display:flex;gap:26px;flex-wrap:wrap;justify-content:center;}
+  .cell{display:flex;flex-direction:column;align-items:center;gap:12px;}
+  .frame{
+    position:relative;width:300px;height:560px;border-radius:26px;overflow:hidden;
+    background:var(--base);box-shadow:0 20px 60px rgba(0,0,0,.5);
+    border:1px solid rgba(255,255,255,.06);
+  }
+  /* Aurora: trường sáng ấm (tông chorus) trôi chậm */
+  .aurora{position:absolute;inset:-30%;z-index:0;
+    background:
+      radial-gradient(45% 38% at 32% 36%, var(--warm1) 0%, transparent 60%),
+      radial-gradient(50% 42% at 70% 62%, var(--warm2) 0%, transparent 62%),
+      radial-gradient(60% 50% at 50% 50%, #2B3A67 0%, transparent 70%);
+    opacity:.55;filter:saturate(1.05);
+    animation:drift 16s ease-in-out infinite alternate;}
+  @keyframes drift{from{transform:translate(-4%,-3%) scale(1.05)}to{transform:translate(4%,3%) scale(1.15)}}
+  .vignette{position:absolute;inset:0;z-index:1;
+    background:radial-gradient(120% 110% at 50% 45%,transparent 45%,rgba(0,0,0,.6) 100%);}
+  .grain{position:absolute;inset:0;z-index:2;opacity:.06;mix-blend-mode:overlay;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+
+  .ui{position:absolute;inset:0;z-index:3;padding:20px;display:flex;flex-direction:column;}
+  .top{display:flex;justify-content:space-between;font-family:'Hanken Grotesk';
+    font-weight:300;font-size:10.5px;letter-spacing:.18em;color:rgba(234,237,245,.55);text-transform:uppercase;}
+  .lyrics{flex:1;display:flex;flex-direction:column;justify-content:center;gap:14px;}
+  .ghost{font-size:15px;line-height:1.35;color:rgba(234,237,245,.18);}
+  .ghost.near{color:rgba(234,237,245,.3);}
+  .active{line-height:1.22;}
+  .accent{color:var(--accent);text-shadow:0 0 22px rgba(242,201,138,.55);}
+
+  /* ---- 3 khí chất font ---- */
+  .f-serif .active{font-family:'Fraunces';font-weight:300;font-size:31px;}
+  .f-serif .accent{font-style:italic;}
+  .f-sans .active{font-family:'Hanken Grotesk';font-weight:300;font-size:28px;letter-spacing:.02em;}
+  .f-expr .active{font-family:'Instrument Serif';font-weight:400;font-size:36px;}
+  .f-expr .accent{font-style:italic;}
+
+  .label{text-align:center;}
+  .label .n{font-weight:400;font-size:15px;}
+  .label .v{font-size:12.5px;color:#8b91a3;}
+  .num{font-family:'Hanken Grotesk';font-weight:300;}
+</style>
+</head>
+<body>
+  <h1>Remain · <b>Aurora</b> — cùng câu hook & tông chorus, chỉ khác kiểu chữ dòng đang hát</h1>
+  <div class="row">
+
+    <div class="cell">
+      <div class="frame f-serif">
+        <div class="aurora"></div><div class="vignette"></div><div class="grain"></div>
+        <div class="ui">
+          <div class="top"><span>Chorus</span><span class="num">1:02 / 3:15</span></div>
+          <div class="lyrics">
+            <div class="ghost">people get older, but some things don't change</div>
+            <div class="ghost near">given me more than my own heart can take</div>
+            <div class="active">but i will <span class="accent">remain,</span> love</div>
+          </div>
+        </div>
+      </div>
+      <div class="label"><div class="n">1 · Soft serif — Fraunces</div><div class="v">thân tình · văn chương · ấm</div></div>
+    </div>
+
+    <div class="cell">
+      <div class="frame f-sans">
+        <div class="aurora"></div><div class="vignette"></div><div class="grain"></div>
+        <div class="ui">
+          <div class="top"><span>Chorus</span><span class="num">1:02 / 3:15</span></div>
+          <div class="lyrics">
+            <div class="ghost">people get older, but some things don't change</div>
+            <div class="ghost near">given me more than my own heart can take</div>
+            <div class="active">but i will <span class="accent">remain,</span> love</div>
+          </div>
+        </div>
+      </div>
+      <div class="label"><div class="n">2 · Cinematic light sans — Hanken</div><div class="v">hiện đại · lạnh · điện ảnh</div></div>
+    </div>
+
+    <div class="cell">
+      <div class="frame f-expr">
+        <div class="aurora"></div><div class="vignette"></div><div class="grain"></div>
+        <div class="ui">
+          <div class="top"><span>Chorus</span><span class="num">1:02 / 3:15</span></div>
+          <div class="lyrics">
+            <div class="ghost">people get older, but some things don't change</div>
+            <div class="ghost near">given me more than my own heart can take</div>
+            <div class="active">but i will <span class="accent">remain,</span> love</div>
+          </div>
+        </div>
+      </div>
+      <div class="label"><div class="n">3 · Expressive — Instrument Serif</div><div class="v">cá tính · tương phản · bắt mắt</div></div>
+    </div>
+
+  </div>
+</body>
+</html>

@@ -1,0 +1,119 @@
+/* aurora.css — redesign "Aurora" (v2): nền Aurora hoặc VIDEO, chữ tích tụ,
+ * trộn Fraunces (thân) × Instrument Serif (hook, in nghiêng cả dòng),
+ * highlight từng chữ + animation mạnh cho từ "actionable". */
+
+:root {
+  --base: #0B0E16;          /* slate-indigo lạnh */
+  --ink:  #EAEDF5;          /* bone lạnh */
+  --au1:  #1B2747;          /* cực màu aurora 1 (JS đổi theo đoạn) */
+  --au2:  #1F4A4A;          /* cực màu aurora 2 */
+  --accent: #CBD8E6;        /* màu chữ đang hát (JS đổi theo đoạn) */
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--base); color: var(--ink);
+  font-family: 'Hanken Grotesk', system-ui, sans-serif;
+  overflow: hidden; -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- nền video (tùy chọn) ---------- */
+.bgvideo { position: fixed; inset: 0; z-index: 0; width: 100%; height: 100%;
+  object-fit: cover; display: none; }
+body.has-video .bgvideo { display: block; }
+
+/* ---------- trường Aurora ---------- */
+.aurora { position: fixed; inset: -25%; z-index: 1; pointer-events: none; transition: opacity 0.6s ease; }
+.au { position: absolute; inset: 0; mix-blend-mode: screen; opacity: 0.62; will-change: transform; }
+.au-a { background: radial-gradient(48% 40% at 34% 38%, var(--au1) 0%, transparent 60%);
+  animation: driftA 26s ease-in-out infinite alternate; }
+.au-b { background: radial-gradient(54% 46% at 68% 64%, var(--au2) 0%, transparent 62%);
+  animation: driftB 34s ease-in-out infinite alternate; }
+@keyframes driftA { from { transform: translate3d(-4%,-3%,0) scale(1.05); } to { transform: translate3d(5%,4%,0) scale(1.18); } }
+@keyframes driftB { from { transform: translate3d(4%,3%,0) scale(1.12); }  to { transform: translate3d(-5%,-2%,0) scale(1.04); } }
+/* khi có video: aurora chỉ còn là lớp phủ nhẹ tô màu lên video */
+body.has-video .aurora { opacity: 0.5; }
+
+/* scrim: chỉ hiện khi có video, đảm bảo chữ vẫn đọc được */
+.scrim { position: fixed; inset: 0; z-index: 2; pointer-events: none; opacity: 0; transition: opacity 0.6s ease;
+  background: linear-gradient(180deg, rgba(8,9,14,0.55), rgba(8,9,14,0.3) 42%, rgba(8,9,14,0.72)); }
+body.has-video .scrim { opacity: 1; }
+
+.vignette { position: fixed; inset: 0; z-index: 2; pointer-events: none;
+  background: radial-gradient(125% 115% at 50% 46%, transparent 48%, rgba(0,0,0,0.62) 100%); }
+.grain { position: fixed; inset: 0; z-index: 3; pointer-events: none; opacity: 0.05; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+/* ---------- chrome tối giản (tự ẩn) ---------- */
+.chrome { position: fixed; z-index: 6; top: 0; left: 0; right: 0;
+  display: flex; justify-content: space-between; padding: 22px 26px;
+  font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase;
+  color: rgba(234,237,245,0.5); transition: opacity 0.6s ease; }
+.timecode { font-variant-numeric: tabular-nums; }
+.progress-wrap { position: fixed; z-index: 6; top: 0; left: 0; right: 0; height: 2px; background: rgba(234,237,245,0.07); }
+.progress { height: 100%; width: 100%; transform: scaleX(0); transform-origin: left;
+  background: linear-gradient(90deg, transparent, var(--accent)); transition: background 1.5s ease; }
+
+/* ---------- sân khấu + cột lyrics tích tụ ---------- */
+.stage { position: relative; z-index: 4; height: 100vh; overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 15%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 15%, #000 82%, transparent 100%); }
+.flow { position: absolute; left: 0; right: 0; top: 0; padding: 0 7vw;
+  display: flex; flex-direction: column; gap: 0.42em; text-align: center; will-change: transform; }
+
+.line {
+  font-family: 'Fraunces', Georgia, serif; font-weight: 300; font-optical-sizing: auto;
+  font-size: clamp(2rem, 5.2vw, 4.1rem); line-height: 1.16; letter-spacing: 0.004em;
+  text-shadow: 0 1px 44px rgba(0,0,0,0.5); will-change: transform, opacity, filter;
+}
+/* hook: Instrument Serif, IN NGHIÊNG CẢ DÒNG -> hết giật khi accent nhảy chữ */
+.line.hook {
+  font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-style: italic;
+  font-size: clamp(2.7rem, 7vw, 5.4rem); line-height: 1.04; letter-spacing: 0.006em;
+}
+
+.word { display: inline-block; margin: 0 0.16em; color: var(--ink);
+  transition: color 0.35s ease, opacity 0.32s ease, text-shadow 0.35s ease;
+  will-change: transform, opacity; }
+.mask { display: inline-block; overflow: hidden; vertical-align: bottom; padding: 0.12em 0; margin: -0.12em 0; }
+.word-inner { display: inline-block; will-change: transform; }
+.char { display: inline-block; }
+
+/* highlight karaoke CHỈ trên dòng đang hát (transform/scale do GSAP lo) */
+.line.is-active .word { opacity: 0.26; }
+.line.is-active .word.is-sung { opacity: 0.58; }
+.line.is-active .word.is-current { opacity: 1; color: var(--accent);
+  text-shadow: 0 0 26px color-mix(in srgb, var(--accent) 55%, transparent); }
+/* từ "actionable" -> glow đậm hơn (pop + shimmer do GSAP) */
+.line.is-active .word.is-current.is-emph { text-shadow: 0 0 42px color-mix(in srgb, var(--accent) 80%, transparent); }
+
+/* ---------- controls (tự ẩn) ---------- */
+.controls { position: fixed; z-index: 7; left: 0; right: 0; bottom: 0;
+  display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 18px 24px 22px;
+  background: linear-gradient(0deg, rgba(0,0,0,0.4), transparent); transition: opacity 0.6s ease; }
+.controls .title { margin-right: auto; font-size: 0.88rem; letter-spacing: 0.04em; color: rgba(234,237,245,0.55); }
+.controls .title b { color: var(--ink); font-weight: 600; }
+button, .filelabel { font: inherit; font-size: 0.9rem; color: var(--ink);
+  background: rgba(234,237,245,0.06); border: 1px solid rgba(234,237,245,0.16);
+  border-radius: 999px; padding: 9px 18px; cursor: pointer;
+  transition: background 0.25s, border-color 0.25s, transform 0.15s; }
+button:hover, .filelabel:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+button:active, .filelabel:active { transform: translateY(1px); }
+#fileInput, #videoInput { display: none; }
+.status { flex-basis: 100%; font-size: 0.78rem; color: rgba(234,237,245,0.4); letter-spacing: 0.02em; }
+
+body.idle .chrome, body.idle .controls { opacity: 0; }
+body.idle { cursor: none; }
+
+/* ---------- mobile: gọn lại, bớt rối ---------- */
+@media (max-width: 640px) {
+  .flow { padding: 0 8vw; gap: 0.3em; }
+  .line { font-size: clamp(1.65rem, 8.4vw, 2.5rem); line-height: 1.14; }
+  .line.hook { font-size: clamp(2rem, 11vw, 3.3rem); }
+  .stage { -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 11%, #000 86%, transparent 100%);
+           mask-image: linear-gradient(180deg, transparent 0%, #000 11%, #000 86%, transparent 100%); }
+  .chrome { padding: 16px 18px; font-size: 0.64rem; }
+}
+
+@media (prefers-reduced-motion: reduce) { .au-a, .au-b { animation: none; } }

@@ -1,0 +1,1084 @@
+/* words.data.js — timestamp WORD-LEVEL (Hướng 3) bạn chấm tay từ editor.html.
+ * Nguồn gốc: assets/lyrics/remain.word.json (export 2026-06-28). */
+window.KT = window.KT || {};
+window.KT.WORD_DATA = [
+  {
+    "lineStart": 16.651912,
+    "lineEnd": 20.65,
+    "words": [
+      {
+        "word": "You've",
+        "start": 16.651912,
+        "end": 16.93
+      },
+      {
+        "word": "been",
+        "start": 16.93,
+        "end": 16.19
+      },
+      {
+        "word": "living",
+        "start": 16.189999,
+        "end": 17.39
+      },
+      {
+        "word": "like",
+        "start": 17.393183999999998,
+        "end": 17.69
+      },
+      {
+        "word": "a",
+        "start": 17.692415999999998,
+        "end": 17.99
+      },
+      {
+        "word": "queen",
+        "start": 17.985101999999998,
+        "end": 18.36
+      },
+      {
+        "word": "on",
+        "start": 18.36288,
+        "end": 18.62
+      },
+      {
+        "word": "such",
+        "start": 18.622239,
+        "end": 18.77
+      },
+      {
+        "word": "a",
+        "start": 18.768572,
+        "end": 19.14
+      },
+      {
+        "word": "small",
+        "start": 19.143272,
+        "end": 19.76
+      },
+      {
+        "word": "amount",
+        "start": 19.761395,
+        "end": 20.87
+      }
+    ]
+  },
+  {
+    "lineStart": 20.871040999999998,
+    "lineEnd": 29.11,
+    "words": [
+      {
+        "word": "Closing",
+        "start": 20.871040999999998,
+        "end": 22.04
+      },
+      {
+        "word": "your",
+        "start": 22.041114,
+        "end": 22.21
+      },
+      {
+        "word": "eyes",
+        "start": 22.206706999999998,
+        "end": 23.67
+      },
+      {
+        "word": "to",
+        "start": 23.668495999999998,
+        "end": 24.15
+      },
+      {
+        "word": "all",
+        "start": 24.145961999999997,
+        "end": 24.52
+      },
+      {
+        "word": "your",
+        "start": 24.524859,
+        "end": 25.2
+      },
+      {
+        "word": "desires",
+        "start": 25.204515999999998,
+        "end": 29.33
+      }
+    ]
+  },
+  {
+    "lineStart": 29.327558,
+    "lineEnd": 33.68,
+    "words": [
+      {
+        "word": "You've",
+        "start": 29.327558,
+        "end": 29.56
+      },
+      {
+        "word": "been",
+        "start": 29.564622999999997,
+        "end": 30.05
+      },
+      {
+        "word": "living",
+        "start": 30.051012999999998,
+        "end": 30.26
+      },
+      {
+        "word": "off",
+        "start": 30.261998,
+        "end": 30.48
+      },
+      {
+        "word": "the",
+        "start": 30.477019,
+        "end": 30.93
+      },
+      {
+        "word": "moments",
+        "start": 30.934898,
+        "end": 31.16
+      },
+      {
+        "word": "that",
+        "start": 31.160158,
+        "end": 31.51
+      },
+      {
+        "word": "I",
+        "start": 31.509629,
+        "end": 31.96
+      },
+      {
+        "word": "come",
+        "start": 31.963934999999996,
+        "end": 32.42
+      },
+      {
+        "word": "around",
+        "start": 32.42297,
+        "end": 33.67
+      }
+    ]
+  },
+  {
+    "lineStart": 33.669686000000006,
+    "lineEnd": 42.86,
+    "words": [
+      {
+        "word": "Girl,",
+        "start": 33.669686000000006,
+        "end": 34.11
+      },
+      {
+        "word": "I'm",
+        "start": 34.11169,
+        "end": 34.88
+      },
+      {
+        "word": "surprised",
+        "start": 34.87541,
+        "end": 36.49
+      },
+      {
+        "word": "your",
+        "start": 36.493465,
+        "end": 36.99
+      },
+      {
+        "word": "hope's",
+        "start": 36.992940000000004,
+        "end": 37.35
+      },
+      {
+        "word": "still",
+        "start": 37.348278,
+        "end": 38.11
+      },
+      {
+        "word": "alive",
+        "start": 38.107995,
+        "end": 43.28
+      }
+    ]
+  },
+  {
+    "lineStart": 43.276806,
+    "lineEnd": 49.48,
+    "words": [
+      {
+        "word": "Where",
+        "start": 43.276806,
+        "end": 43.63
+      },
+      {
+        "word": "there",
+        "start": 43.634443000000005,
+        "end": 44.05
+      },
+      {
+        "word": "is",
+        "start": 44.04816,
+        "end": 44.48
+      },
+      {
+        "word": "truth,",
+        "start": 44.477830000000004,
+        "end": 45.23
+      },
+      {
+        "word": "there",
+        "start": 45.233727,
+        "end": 45.61
+      },
+      {
+        "word": "is",
+        "start": 45.608039000000005,
+        "end": 45.99
+      },
+      {
+        "word": "bound",
+        "start": 45.994718000000006,
+        "end": 46.83
+      },
+      {
+        "word": "to",
+        "start": 46.825526,
+        "end": 47.21
+      },
+      {
+        "word": "be",
+        "start": 47.210923,
+        "end": 47.63
+      },
+      {
+        "word": "pain",
+        "start": 47.634638,
+        "end": 49.69
+      }
+    ]
+  },
+  {
+    "lineStart": 49.686227,
+    "lineEnd": 55.94,
+    "words": [
+      {
+        "word": "People",
+        "start": 49.686227,
+        "end": 50.07
+      },
+      {
+        "word": "get",
+        "start": 50.070878,
+        "end": 50.94
+      },
+      {
+        "word": "older,",
+        "start": 50.941466000000005,
+        "end": 52.11
+      },
+      {
+        "word": "but",
+        "start": 52.111861000000005,
+        "end": 52.64
+      },
+      {
+        "word": "some",
+        "start": 52.636239,
+        "end": 53.31
+      },
+      {
+        "word": "things",
+        "start": 53.311734,
+        "end": 53.61
+      },
+      {
+        "word": "don't",
+        "start": 53.610486,
+        "end": 54.08
+      },
+      {
+        "word": "change",
+        "start": 54.079905000000004,
+        "end": 56.12
+      }
+    ]
+  },
+  {
+    "lineStart": 56.122268000000005,
+    "lineEnd": 62.28,
+    "words": [
+      {
+        "word": "Given",
+        "start": 56.122268000000005,
+        "end": 56.55
+      },
+      {
+        "word": "me",
+        "start": 56.545727,
+        "end": 57
+      },
+      {
+        "word": "more",
+        "start": 56.999611,
+        "end": 57.28
+      },
+      {
+        "word": "than",
+        "start": 57.278986,
+        "end": 58.65
+      },
+      {
+        "word": "my",
+        "start": 58.650886,
+        "end": 58.88
+      },
+      {
+        "word": "own",
+        "start": 58.875441,
+        "end": 59.75
+      },
+      {
+        "word": "heart",
+        "start": 59.745338000000004,
+        "end": 60.06
+      },
+      {
+        "word": "can",
+        "start": 60.059783,
+        "end": 60.58
+      },
+      {
+        "word": "take",
+        "start": 60.576286,
+        "end": 62.47
+      }
+    ]
+  },
+  {
+    "lineStart": 62.470654,
+    "lineEnd": 67.42,
+    "words": [
+      {
+        "word": "But",
+        "start": 62.470654,
+        "end": 62.65
+      },
+      {
+        "word": "I",
+        "start": 62.648293,
+        "end": 63.23
+      },
+      {
+        "word": "will",
+        "start": 63.231513,
+        "end": 63.65
+      },
+      {
+        "word": "remain,",
+        "start": 63.647149000000006,
+        "end": 65.2
+      },
+      {
+        "word": "love",
+        "start": 65.196062,
+        "end": 67.67
+      }
+    ]
+  },
+  {
+    "lineStart": 67.674904,
+    "lineEnd": 72.05,
+    "words": [
+      {
+        "word": "Hidden",
+        "start": 67.674904,
+        "end": 68.34
+      },
+      {
+        "word": "underneath",
+        "start": 68.336782,
+        "end": 68.85
+      },
+      {
+        "word": "the",
+        "start": 68.84503199999999,
+        "end": 69.09
+      },
+      {
+        "word": "torment",
+        "start": 69.09264399999999,
+        "end": 69.42
+      },
+      {
+        "word": "of",
+        "start": 69.415103,
+        "end": 70.16
+      },
+      {
+        "word": "our",
+        "start": 70.164501,
+        "end": 70.39
+      },
+      {
+        "word": "yesterdays",
+        "start": 70.391381,
+        "end": 72.06
+      }
+    ]
+  },
+  {
+    "lineStart": 72.055517,
+    "lineEnd": 80.16,
+    "words": [
+      {
+        "word": "My",
+        "start": 72.055517,
+        "end": 72.49
+      },
+      {
+        "word": "mind",
+        "start": 72.487286,
+        "end": 73.15
+      },
+      {
+        "word": "is",
+        "start": 73.14702799999999,
+        "end": 73.37
+      },
+      {
+        "word": "clear",
+        "start": 73.370505,
+        "end": 75.24
+      },
+      {
+        "word": "'long",
+        "start": 75.235159,
+        "end": 75.71
+      },
+      {
+        "word": "as",
+        "start": 75.70707499999999,
+        "end": 76.35
+      },
+      {
+        "word": "I'm",
+        "start": 76.346768,
+        "end": 76.77
+      },
+      {
+        "word": "here",
+        "start": 76.769247,
+        "end": 80.5
+      }
+    ]
+  },
+  {
+    "lineStart": 80.49880999999999,
+    "lineEnd": 84.91,
+    "words": [
+      {
+        "word": "And",
+        "start": 80.49880999999999,
+        "end": 80.73
+      },
+      {
+        "word": "baby",
+        "start": 80.728983,
+        "end": 81.04
+      },
+      {
+        "word": "girl,",
+        "start": 81.038271,
+        "end": 81.31
+      },
+      {
+        "word": "I",
+        "start": 81.307307,
+        "end": 81.54
+      },
+      {
+        "word": "can't",
+        "start": 81.54413,
+        "end": 81.77
+      },
+      {
+        "word": "afford",
+        "start": 81.766955,
+        "end": 82.17
+      },
+      {
+        "word": "another",
+        "start": 82.173605,
+        "end": 83.05
+      },
+      {
+        "word": "breakaway",
+        "start": 83.04713199999999,
+        "end": 84.86
+      }
+    ]
+  },
+  {
+    "lineStart": 84.86110599999999,
+    "lineEnd": 94.45,
+    "words": [
+      {
+        "word": "Hard",
+        "start": 84.86110599999999,
+        "end": 85.35
+      },
+      {
+        "word": "as",
+        "start": 85.34632099999999,
+        "end": 85.67
+      },
+      {
+        "word": "it",
+        "start": 85.668757,
+        "end": 86.14
+      },
+      {
+        "word": "feels",
+        "start": 86.143271,
+        "end": 88.03
+      },
+      {
+        "word": "year",
+        "start": 88.034489,
+        "end": 88.69
+      },
+      {
+        "word": "after",
+        "start": 88.688626,
+        "end": 89.3
+      },
+      {
+        "word": "year",
+        "start": 89.29676599999999,
+        "end": 94.51
+      }
+    ]
+  },
+  {
+    "lineStart": 94.506802,
+    "lineEnd": 100.75,
+    "words": [
+      {
+        "word": "Where",
+        "start": 94.506802,
+        "end": 94.84
+      },
+      {
+        "word": "there",
+        "start": 94.836441,
+        "end": 95.26
+      },
+      {
+        "word": "is",
+        "start": 95.258398,
+        "end": 95.63
+      },
+      {
+        "word": "truth,",
+        "start": 95.625091,
+        "end": 96.48
+      },
+      {
+        "word": "there",
+        "start": 96.480616,
+        "end": 96.74
+      },
+      {
+        "word": "is",
+        "start": 96.743173,
+        "end": 97.21
+      },
+      {
+        "word": "bound",
+        "start": 97.209383,
+        "end": 98.05
+      },
+      {
+        "word": "to",
+        "start": 98.049943,
+        "end": 98.43
+      },
+      {
+        "word": "be",
+        "start": 98.430188,
+        "end": 98.8
+      },
+      {
+        "word": "pain",
+        "start": 98.79689599999999,
+        "end": 100.84
+      }
+    ]
+  },
+  {
+    "lineStart": 100.837318,
+    "lineEnd": 107.13,
+    "words": [
+      {
+        "word": "People",
+        "start": 100.837318,
+        "end": 101.25
+      },
+      {
+        "word": "get",
+        "start": 101.24857999999999,
+        "end": 102.14
+      },
+      {
+        "word": "older,",
+        "start": 102.14084899999999,
+        "end": 103.31
+      },
+      {
+        "word": "but",
+        "start": 103.310594,
+        "end": 103.61
+      },
+      {
+        "word": "some",
+        "start": 103.61255299999999,
+        "end": 104.37
+      },
+      {
+        "word": "things",
+        "start": 104.37138499999999,
+        "end": 104.85
+      },
+      {
+        "word": "don't",
+        "start": 104.847213,
+        "end": 105.3
+      },
+      {
+        "word": "change",
+        "start": 105.300947,
+        "end": 107.39
+      }
+    ]
+  },
+  {
+    "lineStart": 107.393535,
+    "lineEnd": 113.09,
+    "words": [
+      {
+        "word": "Given",
+        "start": 107.393535,
+        "end": 108.05
+      },
+      {
+        "word": "me",
+        "start": 108.04614199999999,
+        "end": 108.42
+      },
+      {
+        "word": "more",
+        "start": 108.423555,
+        "end": 109.27
+      },
+      {
+        "word": "than",
+        "start": 109.27158899999999,
+        "end": 109.62
+      },
+      {
+        "word": "my",
+        "start": 109.62189099999999,
+        "end": 110.48
+      },
+      {
+        "word": "own",
+        "start": 110.481202,
+        "end": 111.04
+      },
+      {
+        "word": "heart",
+        "start": 111.04019799999999,
+        "end": 111.45
+      },
+      {
+        "word": "can",
+        "start": 111.45389399999999,
+        "end": 111.71
+      },
+      {
+        "word": "take",
+        "start": 111.710174,
+        "end": 113.64
+      }
+    ]
+  },
+  {
+    "lineStart": 113.63866999999999,
+    "lineEnd": 118.25,
+    "words": [
+      {
+        "word": "But",
+        "start": 113.63866999999999,
+        "end": 113.84
+      },
+      {
+        "word": "I",
+        "start": 113.835822,
+        "end": 114.18
+      },
+      {
+        "word": "will",
+        "start": 114.17941499999999,
+        "end": 114.54
+      },
+      {
+        "word": "remain,",
+        "start": 114.544725,
+        "end": 116.46
+      },
+      {
+        "word": "love",
+        "start": 116.457155,
+        "end": 118.67
+      }
+    ]
+  },
+  {
+    "lineStart": 118.670698,
+    "lineEnd": 122.7,
+    "words": [
+      {
+        "word": "Time",
+        "start": 118.670698,
+        "end": 119.26
+      },
+      {
+        "word": "only",
+        "start": 119.257443,
+        "end": 120.67
+      },
+      {
+        "word": "makes",
+        "start": 120.665296,
+        "end": 121.25
+      },
+      {
+        "word": "it",
+        "start": 121.245977,
+        "end": 121.65
+      },
+      {
+        "word": "harder",
+        "start": 121.64849099999999,
+        "end": 123.22
+      }
+    ]
+  },
+  {
+    "lineStart": 123.22449999999999,
+    "lineEnd": 131.12,
+    "words": [
+      {
+        "word": "But",
+        "start": 123.22449999999999,
+        "end": 123.66
+      },
+      {
+        "word": "all",
+        "start": 123.664861,
+        "end": 124.03
+      },
+      {
+        "word": "of",
+        "start": 124.03330799999999,
+        "end": 124.53
+      },
+      {
+        "word": "my",
+        "start": 124.529164,
+        "end": 124.75
+      },
+      {
+        "word": "days,",
+        "start": 124.753649,
+        "end": 126.49
+      },
+      {
+        "word": "I",
+        "start": 126.488242,
+        "end": 126.88
+      },
+      {
+        "word": "will",
+        "start": 126.882391,
+        "end": 127.4
+      },
+      {
+        "word": "remain",
+        "start": 127.402126,
+        "end": 131.29
+      }
+    ]
+  },
+  {
+    "lineStart": 131.288103,
+    "lineEnd": 135.44,
+    "words": [
+      {
+        "word": "Time",
+        "start": 131.288103,
+        "end": 132.11
+      },
+      {
+        "word": "only",
+        "start": 132.108968,
+        "end": 133.33
+      },
+      {
+        "word": "makes",
+        "start": 133.32572199999998,
+        "end": 133.89
+      },
+      {
+        "word": "it",
+        "start": 133.89222,
+        "end": 134.56
+      },
+      {
+        "word": "harder",
+        "start": 134.557353,
+        "end": 135.94
+      }
+    ]
+  },
+  {
+    "lineStart": 135.937483,
+    "lineEnd": 145.39,
+    "words": [
+      {
+        "word": "But",
+        "start": 135.937483,
+        "end": 136.15
+      },
+      {
+        "word": "I",
+        "start": 136.149834,
+        "end": 136.55
+      },
+      {
+        "word": "won't",
+        "start": 136.548665,
+        "end": 137.02
+      },
+      {
+        "word": "complain,",
+        "start": 137.02061899999998,
+        "end": 139.24
+      },
+      {
+        "word": "I",
+        "start": 139.237318,
+        "end": 139.61
+      },
+      {
+        "word": "will",
+        "start": 139.610802,
+        "end": 140.13
+      },
+      {
+        "word": "remain,",
+        "start": 140.1347,
+        "end": 142.16
+      },
+      {
+        "word": "love",
+        "start": 142.158077,
+        "end": 145.73
+      }
+    ]
+  },
+  {
+    "lineStart": 145.727422,
+    "lineEnd": 151.96,
+    "words": [
+      {
+        "word": "Where",
+        "start": 145.727422,
+        "end": 146.04
+      },
+      {
+        "word": "there",
+        "start": 146.040527,
+        "end": 146.41
+      },
+      {
+        "word": "is",
+        "start": 146.411721,
+        "end": 146.87
+      },
+      {
+        "word": "truth,",
+        "start": 146.87058299999998,
+        "end": 147.7
+      },
+      {
+        "word": "there",
+        "start": 147.69806499999999,
+        "end": 147.99
+      },
+      {
+        "word": "is",
+        "start": 147.990772,
+        "end": 148.41
+      },
+      {
+        "word": "bound",
+        "start": 148.407208,
+        "end": 149.23
+      },
+      {
+        "word": "to",
+        "start": 149.234142,
+        "end": 149.64
+      },
+      {
+        "word": "be",
+        "start": 149.635034,
+        "end": 150.03
+      },
+      {
+        "word": "pain",
+        "start": 150.025451,
+        "end": 152.11
+      }
+    ]
+  },
+  {
+    "lineStart": 152.111276,
+    "lineEnd": 158.33,
+    "words": [
+      {
+        "word": "People",
+        "start": 152.111276,
+        "end": 153.13
+      },
+      {
+        "word": "get",
+        "start": 153.127774,
+        "end": 153.38
+      },
+      {
+        "word": "over,",
+        "start": 153.37991,
+        "end": 154.47
+      },
+      {
+        "word": "but",
+        "start": 154.467032,
+        "end": 155.71
+      },
+      {
+        "word": "some",
+        "start": 155.709026,
+        "end": 156.08
+      },
+      {
+        "word": "things",
+        "start": 156.080053,
+        "end": 156.47
+      },
+      {
+        "word": "don't",
+        "start": 156.467409,
+        "end": 157.85
+      },
+      {
+        "word": "change",
+        "start": 157.850862,
+        "end": 158.51
+      }
+    ]
+  },
+  {
+    "lineStart": 158.506464,
+    "lineEnd": 164.43,
+    "words": [
+      {
+        "word": "Given",
+        "start": 158.506464,
+        "end": 159.47
+      },
+      {
+        "word": "me",
+        "start": 159.469887,
+        "end": 159.64
+      },
+      {
+        "word": "more",
+        "start": 159.638332,
+        "end": 160.45
+      },
+      {
+        "word": "than",
+        "start": 160.451389,
+        "end": 160.82
+      },
+      {
+        "word": "my",
+        "start": 160.823476,
+        "end": 161.27
+      },
+      {
+        "word": "own",
+        "start": 161.265083,
+        "end": 162.08
+      },
+      {
+        "word": "heart",
+        "start": 162.081645,
+        "end": 162.4
+      },
+      {
+        "word": "can",
+        "start": 162.403592,
+        "end": 162.96
+      },
+      {
+        "word": "take",
+        "start": 162.95767,
+        "end": 164.76
+      }
+    ]
+  },
+  {
+    "lineStart": 164.758171,
+    "lineEnd": 170.19,
+    "words": [
+      {
+        "word": "But",
+        "start": 164.758171,
+        "end": 164.99
+      },
+      {
+        "word": "I",
+        "start": 164.991505,
+        "end": 165.38
+      },
+      {
+        "word": "will",
+        "start": 165.383489,
+        "end": 165.68
+      },
+      {
+        "word": "remain,",
+        "start": 165.683721,
+        "end": 167.63
+      },
+      {
+        "word": "love",
+        "start": 167.626299,
+        "end": 170.19
+      }
+    ]
+  }
+];

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tap-Sync Editor — Word-level (Hướng 3)</title>
+  <style>
+    /* Giao diện CHỨC NĂNG, tối giản — sẽ thiết kế sau. */
+    :root { --bg:#16131a; --panel:#211c29; --line:#332b3f; --text:#e7e0ef; --dim:#8a809b; --green:#7bd88f; --amber:#f0b15c; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--text);
+      font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif; }
+    header { padding:14px 18px; border-bottom:1px solid var(--line); position:sticky; top:0; background:var(--bg); z-index:5; }
+    header h1 { font-size:1rem; margin:0 0 8px; font-weight:600; }
+    .bar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    button, select, input[type=number], label.file {
+      font:inherit; font-size:.86rem; color:var(--text); background:var(--panel);
+      border:1px solid var(--line); border-radius:7px; padding:7px 12px; cursor:pointer; }
+    button:hover, label.file:hover { border-color:var(--amber); }
+    button.primary { background:#3a2d1a; border-color:var(--amber); }
+    .muted { color:var(--dim); font-size:.8rem; }
+    #fileInput { display:none; }
+    .field { display:flex; align-items:center; gap:6px; }
+    input[type=number] { width:72px; }
+
+    main { display:grid; grid-template-columns: 1fr 380px; gap:0; height: calc(100vh - 132px); }
+    #lyrics { overflow:auto; padding:18px 22px; }
+    .row { padding:6px 8px; border-radius:8px; line-height:2.1; }
+    .row.active { background:rgba(240,177,92,.07); }
+    .w { display:inline-block; padding:1px 5px; margin:1px 0; border-radius:5px; cursor:pointer;
+      color:var(--dim); border:1px solid transparent; transition:background .1s,color .1s; }
+    .w:hover { background:rgba(255,255,255,.06); }
+    .w.done { color:var(--green); }
+    .w.cursor { border-color:var(--amber); color:var(--amber); background:rgba(240,177,92,.12); }
+    .w.singing { text-decoration:underline; text-decoration-color:var(--amber); }
+
+    aside { border-left:1px solid var(--line); padding:16px; overflow:auto; background:#1b1722; }
+    aside h2 { font-size:.82rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin:14px 0 8px; }
+    aside h2:first-child { margin-top:0; }
+    kbd { background:var(--panel); border:1px solid var(--line); border-bottom-width:2px; border-radius:5px; padding:1px 7px; font-size:.82rem; }
+    .legend div { margin:5px 0; font-size:.86rem; }
+    #output { width:100%; height:200px; background:var(--bg); color:var(--text); border:1px solid var(--line);
+      border-radius:8px; padding:10px; font-family: ui-monospace, Menlo, monospace; font-size:.78rem; resize:vertical; }
+    .status { padding:8px 18px; border-top:1px solid var(--line); display:flex; gap:18px; align-items:center; background:var(--bg); }
+    .status b { color:var(--amber); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🎯 Tap-Sync Editor — tạo timestamp <b>word-level</b> (Hướng 3) cho "Remain"</h1>
+    <div class="bar">
+      <button id="btnPlay" class="primary">▶ / ⏸ (P)</button>
+      <button id="btnTap" class="primary">⭐ TAP (Space)</button>
+      <button id="btnUndo">↩ Hoàn tác (Backspace)</button>
+      <button id="btnReplay">🔁 Nghe lại dòng (R)</button>
+      <div class="field"><span class="muted">Tốc độ</span>
+        <select id="speed"><option>1</option><option>0.85</option><option selected>0.75</option><option>0.5</option></select>
+      </div>
+      <label class="field"><input type="checkbox" id="loopline" /> <span class="muted">Lặp dòng</span></label>
+      <div class="field"><span class="muted">Bù tay (s)</span><input type="number" id="offset" value="-0.12" step="0.01" /></div>
+      <label class="file">🎵 Đổi nhạc…<input type="file" id="fileInput" accept="audio/*" /></label>
+    </div>
+  </header>
+
+  <main>
+    <div id="lyrics"></div>
+    <aside>
+      <h2>Phím tắt</h2>
+      <div class="legend">
+        <div><kbd>Space</kbd> chấm mốc chữ hiện tại → nhảy chữ kế</div>
+        <div><kbd>Backspace</kbd> hoàn tác chữ vừa chấm</div>
+        <div><kbd>P</kbd> phát / dừng &nbsp; <kbd>R</kbd> nghe lại dòng</div>
+        <div><kbd>←</kbd> <kbd>→</kbd> tua ∓2s &nbsp;·&nbsp; click một chữ để chọn lại</div>
+      </div>
+      <h2>Cách làm</h2>
+      <div class="muted" style="line-height:1.55">
+        1. Bấm ▶ phát (nên để 0.75x).<br/>
+        2. Mỗi khi một chữ <b>bắt đầu</b> vang lên → gõ <kbd>Space</kbd>.<br/>
+        3. Sai thì <kbd>Backspace</kbd>, hoặc click chữ để chọn lại & tua tới đó.<br/>
+        4. Bật "Lặp dòng" để tap đi tap lại một dòng cho chuẩn.<br/>
+        5. Tự lưu vào trình duyệt; xong thì Export bên dưới.
+      </div>
+      <h2>Xuất kết quả</h2>
+      <div class="bar">
+        <button id="btnJSON">Copy JSON</button>
+        <button id="btnLRC">Copy Enhanced LRC</button>
+        <button id="btnDlJSON">⬇ .json</button>
+        <button id="btnDlLRC">⬇ .lrc</button>
+        <button id="btnClear">🗑 Xoá hết</button>
+      </div>
+      <textarea id="output" placeholder="Kết quả copy sẽ hiện ở đây…" readonly></textarea>
+    </aside>
+  </main>
+
+  <div class="status">
+    <span id="stats">0/0</span>
+    <span id="nowline" class="muted"></span>
+  </div>
+
+  <audio id="audio" src="assets/audio/clip.mp3" preload="auto"></audio>
+
+  <script src="src/js/lrc-parser.js"></script>
+  <script src="src/js/lyrics.data.js"></script>
+  <script src="src/js/editor.js"></script>
+</body>
+</html>
