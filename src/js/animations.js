@@ -1,13 +1,15 @@
-/* animations.js — dựng DOM một dòng + các trạng thái chuyển động (GSAP, chỉ transform/opacity/blur).
- *   .line > .word > .mask > .word-inner > .char
- *   Hook ("I will remain") -> app gắn class .hook (đổi sang Instrument Serif qua CSS).
- *
- * Mô hình: TẤT CẢ dòng dựng sẵn & xếp chồng trong .flow. Trạng thái:
- *   future = ẩn · active = vào bằng blur→nét + chữ trượt lên · past = ở lại, mờ & lùi nhẹ.
+/* animations.js — dựng DOM dòng + trạng thái chuyển động (GSAP).
+ * v3: spring easing (cảm giác lò xo kiểu Apple Music), active line to hơn, depth blur theo khoảng cách.
+ *   .line > .word > .mask > .word-inner > .char   ·   hook -> class .hook (Instrument italic)
  */
 window.KT = window.KT || {};
 (function (KT) {
   const HOOK_RE = /i will remain/i;
+  const ACTIVE_SCALE = 1.04;   // dòng đang hát to hơn
+  const PAST_SCALE = 0.9;      // dòng đã hát nhỏ lại (lùi xa)
+
+  // Spring giảm chấn: vào nhanh, dội nhẹ 1 nhịp rồi ổn định (truyền cho GSAP làm ease).
+  function spring(p) { return 1 - Math.exp(-8 * p) * Math.cos(7 * p); }
 
   function buildLineEl(text) {
     const line = document.createElement('div');
@@ -25,36 +27,38 @@ window.KT = window.KT || {};
     return line;
   }
 
-  // VÀO: blur → nét, dòng nổi lên, từng chữ trượt lên qua mask.
+  // VÀO: blur→nét + nổi lên + chữ trượt lên qua mask. Kết thúc ở ACTIVE_SCALE.
   function enter(line, instant) {
     const inners = line.querySelectorAll('.word-inner');
     if (instant) {
-      gsap.set(line, { opacity: 1, y: 0, scale: 1, filter: 'blur(0px)' });
+      gsap.set(line, { opacity: 1, y: 0, scale: ACTIVE_SCALE, filter: 'blur(0px)' });
       gsap.set(inners, { yPercent: 0 });
       return;
     }
     gsap.fromTo(line,
-      { opacity: 0, y: 16, scale: 0.99, filter: 'blur(12px)' },
-      { opacity: 1, y: 0, scale: 1, filter: 'blur(0px)', duration: 1.05, ease: 'power2.out', overwrite: 'auto' });
+      { opacity: 0, y: 16, scale: 0.985, filter: 'blur(12px)' },
+      { opacity: 1, y: 0, scale: ACTIVE_SCALE, filter: 'blur(0px)', duration: 1.05, ease: 'power2.out', overwrite: 'auto' });
     gsap.fromTo(inners,
       { yPercent: 110 },
       { yPercent: 0, duration: 0.95, ease: 'power3.out', stagger: 0.045, overwrite: 'auto' });
   }
 
-  // Dòng đã hát xong -> ở lại nhưng lùi & mờ (KHÔNG biến mất).
-  // opacity mờ dần theo khoảng cách (app truyền vào) -> giảm rối, nhất là trên mobile.
-  function toPast(line, instant, opacity) {
-    gsap.to(line, { opacity: opacity == null ? 0.3 : opacity, scale: 0.95, filter: 'blur(0.5px)', y: 0,
+  // Dòng đã hát -> ở lại nhưng nhỏ, mờ & nhòe dần theo khoảng cách (depth).
+  function toPast(line, instant, opacity, blur) {
+    gsap.to(line, {
+      opacity: opacity == null ? 0.3 : opacity, scale: PAST_SCALE,
+      filter: 'blur(' + (blur == null ? 0.5 : blur) + 'px)', y: 0,
       duration: instant ? 0 : 0.85, ease: 'power2.out', overwrite: 'auto' });
   }
-  // Kích hoạt lại một dòng đã hiện (vd seek lùi).
+  // Kích hoạt lại (seek lùi) -> dội lò xo về ACTIVE_SCALE.
   function toActive(line, instant) {
-    gsap.to(line, { opacity: 1, scale: 1, filter: 'blur(0px)', y: 0,
-      duration: instant ? 0 : 0.5, ease: 'power2.out', overwrite: 'auto' });
+    gsap.to(line, { opacity: 1, scale: ACTIVE_SCALE, filter: 'blur(0px)', y: 0,
+      duration: instant ? 0 : 0.6, ease: spring, overwrite: 'auto' });
   }
   function toFuture(line, instant) {
     gsap.to(line, { opacity: 0, duration: instant ? 0 : 0.4, overwrite: 'auto' });
   }
 
-  KT.anim = { buildLineEl, enter, toPast, toActive, toFuture, HOOK_RE };
+  KT.spring = spring;
+  KT.anim = { buildLineEl, enter, toPast, toActive, toFuture, HOOK_RE, ACTIVE_SCALE, PAST_SCALE };
 })(window.KT);

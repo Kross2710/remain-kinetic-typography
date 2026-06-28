@@ -21,7 +21,9 @@ body {
 /* ---------- nền video (tùy chọn) ---------- */
 .bgvideo { position: fixed; inset: 0; z-index: 0; width: 100%; height: 100%;
   object-fit: cover; display: none; }
-body.has-video .bgvideo { display: block; }
+/* Khi bật video: blur + tối lại -> thành "trường màu" atmospheric, chữ nổi rõ (kiểu Apple Music).
+   scale 1.12 để mép blur không lộ viền. */
+body.has-video .bgvideo { display: block; filter: blur(11px) brightness(0.6) saturate(1.08); transform: scale(1.12); }
 
 /* ---------- trường Aurora ---------- */
 .aurora { position: fixed; inset: -25%; z-index: 1; pointer-events: none; transition: opacity 0.6s ease; }
@@ -74,19 +76,24 @@ body.has-video .scrim { opacity: 1; }
 }
 
 .word { display: inline-block; margin: 0 0.16em; color: var(--ink);
-  transition: color 0.35s ease, opacity 0.32s ease, text-shadow 0.35s ease;
-  will-change: transform, opacity; }
+  transition: filter 0.3s ease; will-change: transform, opacity, filter; }
 .mask { display: inline-block; overflow: hidden; vertical-align: bottom; padding: 0.12em 0; margin: -0.12em 0; }
 .word-inner { display: inline-block; will-change: transform; }
 .char { display: inline-block; }
 
-/* highlight karaoke CHỈ trên dòng đang hát (transform/scale do GSAP lo) */
-.line.is-active .word { opacity: 0.26; }
-.line.is-active .word.is-sung { opacity: 0.58; }
-.line.is-active .word.is-current { opacity: 1; color: var(--accent);
-  text-shadow: 0 0 26px color-mix(in srgb, var(--accent) 55%, transparent); }
-/* từ "actionable" -> glow đậm hơn (pop + shimmer do GSAP) */
-.line.is-active .word.is-current.is-emph { text-shadow: 0 0 42px color-mix(in srgb, var(--accent) 80%, transparent); }
+/* Karaoke wipe LIÊN TỤC: fill nằm trên TỪNG .char (vì .char mới chứa text trực tiếp).
+   JS set --cp (0..1) cho mỗi char -> dòng sáng dần trái→phải. Đã hát = accent (theo đoạn), chưa = ink mờ. */
+.line.is-active .char {
+  --cp: 0;
+  background-image: linear-gradient(100deg,
+    var(--accent) calc(var(--cp) * 100% - 15%),
+    rgba(234, 237, 245, 0.30) calc(var(--cp) * 100% + 15%));
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent; color: transparent;
+}
+/* glow cho chữ đang hát (drop-shadow hợp với background-clip:text) */
+.line.is-active .word.is-current { filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent) 55%, transparent)); }
+.line.is-active .word.is-current.is-emph { filter: drop-shadow(0 0 20px color-mix(in srgb, var(--accent) 85%, transparent)); }
 
 /* ---------- controls (tự ẩn) ---------- */
 .controls { position: fixed; z-index: 7; left: 0; right: 0; bottom: 0;

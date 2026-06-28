@@ -53,7 +53,8 @@
         el.classList.remove('is-active', 'is-future'); el.classList.add('is-past');
         const dist = active - i;                          // 1 = gần nhất
         const op = Math.max(0, 0.44 - (dist - 1) * 0.14); // mờ dần theo khoảng cách
-        KT.anim.toPast(el, instant, op);
+        const blur = Math.min(0.6 + (dist - 1) * 0.85, 3.4); // nhòe dần (depth)
+        KT.anim.toPast(el, instant, op, blur);
       } else if (i === active) {
         el.classList.remove('is-past', 'is-future'); el.classList.add('is-active');
         if (instant) KT.anim.enter(el, true);
@@ -71,7 +72,7 @@
   function recenter(active, instant) {
     const el = lineEls[active]; if (!el) return;
     const target = stage.clientHeight * 0.58 - (el.offsetTop + el.offsetHeight / 2);
-    gsap.to(flow, { y: target, duration: instant ? 0 : 0.9, ease: 'power2.out', overwrite: 'auto' });
+    gsap.to(flow, { y: target, duration: instant ? 0 : 1.0, ease: KT.spring, overwrite: 'auto' });
   }
 
   function onActiveChange(idx, forceInstant) {
@@ -87,29 +88,35 @@
     } else { wordSegs = []; wordEls = []; wordState = []; }
   }
 
-  // ② highlight + ✨ animation mạnh cho từ "actionable"
+  // ② Karaoke wipe LIÊN TỤC: mỗi frame set --p (0..1) cho từng chữ -> sáng dần trái→phải.
+  //    + glow/pop khi chữ trở thành "current" (và mạnh hơn cho từ "actionable").
   function updateHighlight(t) {
     if (!wordEls.length || !wordSegs.length) return;
     let act = -1;
     for (let i = 0; i < wordSegs.length; i++) { if (t >= wordSegs[i].start) act = i; else break; }
     for (let i = 0; i < wordEls.length; i++) {
+      const seg = wordSegs[i], el = wordEls[i];
+      const chars = el.__chars || (el.__chars = el.querySelectorAll('.char'));
       const st = i < act ? 'sung' : (i === act ? 'current' : 'future');
+
+      // chữ đang hát: cập nhật fill từng ký tự MỖI FRAME (wipe liên tục)
+      if (i === act) {
+        const d = Math.max(0.0001, seg.end - seg.start);
+        let base = (t - seg.start) / d; if (base < 0) base = 0; else if (base > 1) base = 1;
+        const n = chars.length;
+        for (let j = 0; j < n; j++) { let cp = base * n - j; cp = cp < 0 ? 0 : (cp > 1 ? 1 : cp); chars[j].style.setProperty('--cp', cp.toFixed(3)); }
+      }
+
       if (wordState[i] === st) continue;
       wordState[i] = st;
-      const el = wordEls[i];
-      el.classList.remove('is-sung', 'is-current', 'is-emph');
-      if (st === 'sung') { el.classList.add('is-sung'); }
-      else if (st === 'current') {
+      if (st === 'sung') { for (let j = 0; j < chars.length; j++) chars[j].style.setProperty('--cp', '1'); }
+      else if (st === 'future') { for (let j = 0; j < chars.length; j++) chars[j].style.setProperty('--cp', '0'); }
+      el.classList.remove('is-current', 'is-emph');
+      if (st === 'current') {
         el.classList.add('is-current');
         const emph = EMPH.has(normWord(el.textContent));
-        if (emph) {
-          el.classList.add('is-emph');
-          gsap.fromTo(el, { scale: 0.84 }, { scale: 1, duration: 0.55, ease: 'back.out(1.7)', overwrite: 'auto' });
-          gsap.fromTo(el.querySelectorAll('.char'),
-            { opacity: 0.25 }, { opacity: 1, stagger: 0.03, duration: 0.45, ease: 'power2.out', overwrite: 'auto' });
-        } else {
-          gsap.fromTo(el, { scale: 0.97 }, { scale: 1, duration: 0.3, ease: 'power2.out', overwrite: 'auto' });
-        }
+        if (emph) { el.classList.add('is-emph'); gsap.fromTo(el, { scale: 0.82 }, { scale: 1, duration: 0.55, ease: 'back.out(1.7)', overwrite: 'auto' }); }
+        else { gsap.fromTo(el, { scale: 0.97 }, { scale: 1, duration: 0.3, ease: 'power2.out', overwrite: 'auto' }); }
       }
     }
   }
