@@ -52,7 +52,7 @@
       if (i < active) {
         el.classList.remove('is-active', 'is-future'); el.classList.add('is-past');
         const dist = active - i;                          // 1 = gần nhất
-        const op = Math.max(0, 0.44 - (dist - 1) * 0.14); // mờ dần theo khoảng cách
+        const op = Math.max(0, 0.62 - (dist - 1) * 0.15); // mờ dần theo khoảng cách (sáng hơn để dễ đọc)
         const blur = Math.min(0.6 + (dist - 1) * 0.85, 3.4); // nhòe dần (depth)
         KT.anim.toPast(el, instant, op, blur);
       } else if (i === active) {

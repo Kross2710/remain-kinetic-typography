@@ -21,9 +21,9 @@ body {
 /* ---------- nền video (tùy chọn) ---------- */
 .bgvideo { position: fixed; inset: 0; z-index: 0; width: 100%; height: 100%;
   object-fit: cover; display: none; }
-/* Khi bật video: blur + tối lại -> thành "trường màu" atmospheric, chữ nổi rõ (kiểu Apple Music).
-   scale 1.12 để mép blur không lộ viền. */
-body.has-video .bgvideo { display: block; filter: blur(11px) brightness(0.6) saturate(1.08); transform: scale(1.12); }
+/* Khi bật video: GIỮ NÉT (video là phần nghệ thuật chính), chỉ giảm sáng nhẹ.
+   Độ đọc của chữ lo bằng đổ bóng chữ (xem .line / .word bên dưới), không blur nền. */
+body.has-video .bgvideo { display: block; filter: brightness(0.92) saturate(1.06); }
 
 /* ---------- trường Aurora ---------- */
 .aurora { position: fixed; inset: -25%; z-index: 1; pointer-events: none; transition: opacity 0.6s ease; }
@@ -38,8 +38,9 @@ body.has-video .bgvideo { display: block; filter: blur(11px) brightness(0.6) sat
 body.has-video .aurora { opacity: 0.5; }
 
 /* scrim: chỉ hiện khi có video, đảm bảo chữ vẫn đọc được */
+/* Scrim nhẹ: chỉ tối nhẹ mép trên/dưới (chừa controls) — để video vẫn hiện rõ ở giữa. */
 .scrim { position: fixed; inset: 0; z-index: 2; pointer-events: none; opacity: 0; transition: opacity 0.6s ease;
-  background: linear-gradient(180deg, rgba(8,9,14,0.55), rgba(8,9,14,0.3) 42%, rgba(8,9,14,0.72)); }
+  background: linear-gradient(180deg, rgba(8,9,14,0.32), rgba(8,9,14,0.08) 45%, rgba(8,9,14,0.55)); }
 body.has-video .scrim { opacity: 1; }
 
 .vignette { position: fixed; inset: 0; z-index: 2; pointer-events: none;
@@ -67,7 +68,8 @@ body.has-video .scrim { opacity: 1; }
 .line {
   font-family: 'Fraunces', Georgia, serif; font-weight: 300; font-optical-sizing: auto;
   font-size: clamp(2rem, 5.2vw, 4.1rem); line-height: 1.16; letter-spacing: 0.004em;
-  text-shadow: 0 1px 44px rgba(0,0,0,0.5); will-change: transform, opacity, filter;
+  /* quầng tối mạnh để chữ nổi trên video SẮC NÉT (giữ video rõ, không blur) — cho dòng "ở lại" (màu thường) */
+  text-shadow: 0 0 5px rgba(0,0,0,0.92), 0 2px 4px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.55); will-change: transform, opacity, filter;
 }
 /* hook: Instrument Serif, IN NGHIÊNG CẢ DÒNG -> hết giật khi accent nhảy chữ */
 .line.hook {
@@ -83,17 +85,20 @@ body.has-video .scrim { opacity: 1; }
 
 /* Karaoke wipe LIÊN TỤC: fill nằm trên TỪNG .char (vì .char mới chứa text trực tiếp).
    JS set --cp (0..1) cho mỗi char -> dòng sáng dần trái→phải. Đã hát = accent (theo đoạn), chưa = ink mờ. */
+.line.is-active { --lit: var(--ink); }                       /* chữ SÁNG (cream) là chính */
 .line.is-active .char {
   --cp: 0;
   background-image: linear-gradient(100deg,
-    var(--accent) calc(var(--cp) * 100% - 15%),
-    rgba(234, 237, 245, 0.30) calc(var(--cp) * 100% + 15%));
+    var(--lit) calc(var(--cp) * 100% - 15%),
+    rgba(234, 237, 245, 0.45) calc(var(--cp) * 100% + 15%));
   -webkit-background-clip: text; background-clip: text;
   -webkit-text-fill-color: transparent; color: transparent;
 }
 /* glow cho chữ đang hát (drop-shadow hợp với background-clip:text) */
-.line.is-active .word.is-current { filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent) 55%, transparent)); }
-.line.is-active .word.is-current.is-emph { filter: drop-shadow(0 0 20px color-mix(in srgb, var(--accent) 85%, transparent)); }
+/* dòng đang hát dùng bg-clip:text (text-shadow không ăn) -> quầng tối MẠNH bằng filter để đọc rõ trên video sắc nét */
+.line.is-active .word { filter: drop-shadow(0 0 5px rgba(0,0,0,0.95)) drop-shadow(0 2px 3px rgba(0,0,0,0.9)); }
+.line.is-active .word.is-current { --lit: var(--accent); filter: drop-shadow(0 0 5px rgba(0,0,0,0.95)) drop-shadow(0 2px 3px rgba(0,0,0,0.9)) drop-shadow(0 0 14px color-mix(in srgb, var(--accent) 60%, transparent)); }
+.line.is-active .word.is-current.is-emph { filter: drop-shadow(0 0 5px rgba(0,0,0,0.95)) drop-shadow(0 2px 3px rgba(0,0,0,0.9)) drop-shadow(0 0 22px color-mix(in srgb, var(--accent) 85%, transparent)); }
 
 /* ---------- controls (tự ẩn) ---------- */
 .controls { position: fixed; z-index: 7; left: 0; right: 0; bottom: 0;
