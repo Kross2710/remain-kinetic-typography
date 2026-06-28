@@ -8,8 +8,9 @@ assets/video/*.mp4
 assets/video/*.mov
 assets/video/*.webm
 assets/video/*.m4v
-# ...trừ bản nhẹ H.264 đã convert (dùng cho web/deploy)
+# ...trừ bản nhẹ H.264 đã convert (dùng cho web/deploy): dọc cho mobile + ngang cho desktop
 !assets/video/bg-web.mp4
+!assets/video/bg-web-desktop.mp4
 
 # scratch
 *.log

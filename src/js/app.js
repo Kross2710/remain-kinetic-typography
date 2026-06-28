@@ -170,16 +170,43 @@
     lineEls.forEach((el) => { if (!el) return; delete el.dataset.seen; el.classList.remove('is-active', 'is-past'); el.classList.add('is-future'); gsap.set(el, { opacity: 0 }); });
   }
 
-  // ---- nền video ----
+  // ---- nền video (responsive: ngang 16:9 cho desktop, dọc 9:16 cho mobile) ----
+  const VIDEO_DESKTOP = 'assets/video/bg-web-desktop.mp4';
+  const VIDEO_MOBILE = 'assets/video/bg-web.mp4';
+  const desktopMQ = window.matchMedia('(min-width: 768px)');
+  let userVideo = false; // user tự chọn file -> ngừng auto đổi nguồn theo màn hình
+  function pickVideoSrc() { return desktopMQ.matches ? VIDEO_DESKTOP : VIDEO_MOBILE; }
+
   function enableVideo() {
     videoOn = true; document.body.classList.add('has-video');
     bgvideo.play().catch(() => {}); // nền video tự phát (muted) ngay khi sẵn sàng, kể cả chưa bấm Phát
   }
   bgvideo.addEventListener('loadeddata', enableVideo);
-  bgvideo.addEventListener('error', () => { /* không có bg.mp4 -> giữ nền Aurora */ });
-  bgvideo.src = 'assets/video/bg-web.mp4'; // bản nhẹ H.264 (commit lên repo); bg.mp4 gốc giữ ở local
+  bgvideo.addEventListener('error', () => {
+    // desktop thiếu file -> lùi về video mobile; thiếu nốt -> giữ nền Aurora
+    if (!userVideo && bgvideo.getAttribute('src') === VIDEO_DESKTOP) bgvideo.src = VIDEO_MOBILE;
+  });
+  bgvideo.src = pickVideoSrc(); // bản web nhẹ H.264 (commit lên repo); bản gốc giữ ở local
+
+  // Đổi nguồn khi vượt ngưỡng desktop/mobile — giữ nguyên vị trí phát (sync loop tự khớp lại tiếp).
+  function swapResponsiveVideo() {
+    if (userVideo) return;
+    const want = pickVideoSrc();
+    if (bgvideo.getAttribute('src') === want) return;
+    const at = bgvideo.currentTime || 0;
+    bgvideo.src = want;
+    bgvideo.addEventListener('loadeddata', function once() {
+      bgvideo.removeEventListener('loadeddata', once);
+      try { bgvideo.currentTime = Math.min(at, (bgvideo.duration || at) - 0.05); } catch (e) {}
+      if (clock.isRunning()) bgvideo.play().catch(() => {});
+    });
+  }
+  if (desktopMQ.addEventListener) desktopMQ.addEventListener('change', swapResponsiveVideo);
+  else if (desktopMQ.addListener) desktopMQ.addListener(swapResponsiveVideo); // Safari cũ
+
   videoInput.addEventListener('change', (e) => {
     const f = e.target.files && e.target.files[0]; if (!f) return;
+    userVideo = true;
     bgvideo.src = URL.createObjectURL(f); enableVideo();
     if (clock.isRunning()) bgvideo.play().catch(() => {});
   });
