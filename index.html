@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -32,13 +32,14 @@
 
   <div class="controls" id="controls">
     <div class="title"><b>Remain</b> — Christian Kuria</div>
-    <button id="playBtn">▶ Phát</button>
-    <button id="previewBtn">✨ Xem thử (không nhạc)</button>
-    <label class="filelabel" for="fileInput">🎵 Chọn nhạc…</label>
+    <button id="playBtn">▶ Play</button>
+    <button id="previewBtn">✨ Preview (no audio)</button>
+    <label class="filelabel" for="fileInput">🎵 Load audio…</label>
     <input type="file" id="fileInput" accept="audio/*" />
-    <label class="filelabel" for="videoInput">🎬 Nền video…</label>
+    <label class="filelabel" for="videoInput">🎬 Video…</label>
     <input type="file" id="videoInput" accept="video/*" />
-    <div class="status" id="status">Đang tải…</div>
+    <button id="fsBtn">⛶ Fullscreen</button>
+    <div class="status" id="status">Loading…</div>
   </div>
 
   <script src="src/vendor/gsap.min.js"></script>

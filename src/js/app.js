@@ -13,6 +13,7 @@
   const bgvideo = document.getElementById('bgvideo');
   const playBtn = document.getElementById('playBtn');
   const previewBtn = document.getElementById('previewBtn');
+  const fsBtn = document.getElementById('fsBtn');
   const fileInput = document.getElementById('fileInput');
   const videoInput = document.getElementById('videoInput');
   const statusEl = document.getElementById('status');
@@ -151,7 +152,7 @@
     const t = clock.getTime();
     if (clock.mode === 'virtual' && t > lastTime + 3) {
       clock.endVirtual(); if (videoOn) bgvideo.pause();
-      setStatus('■ Hết bài (xem thử). Bấm "Xem thử" để chạy lại.');
+      setStatus('■ End (preview). Press "Preview" to replay.');
       rafId = null; return;
     }
     updateChrome(t);
@@ -184,31 +185,84 @@
   });
 
   // ---- audio events ----
-  audio.addEventListener('play', () => { clock.mode = 'audio'; setStatus('▶ Đang phát'); if (videoOn) bgvideo.play().catch(() => {}); startLoop(); });
-  audio.addEventListener('pause', () => { if (videoOn) bgvideo.pause(); if (!audio.ended) setStatus('⏸ Tạm dừng'); });
-  audio.addEventListener('ended', () => { if (videoOn) bgvideo.pause(); setStatus('■ Hết bài'); });
+  audio.addEventListener('play', () => { clock.mode = 'audio'; setStatus('▶ Playing'); if (videoOn) bgvideo.play().catch(() => {}); startLoop(); });
+  audio.addEventListener('pause', () => { if (videoOn) bgvideo.pause(); if (!audio.ended) setStatus('⏸ Paused'); });
+  audio.addEventListener('ended', () => { if (videoOn) bgvideo.pause(); setStatus('■ End'); });
   audio.addEventListener('seeking', () => { seeking = true; });
   audio.addEventListener('seeked', () => {
     seeking = false; const t = clock.getTime();
     updateChrome(t); onActiveChange(findActiveIndex(t), true); updateHighlight(t); syncVideo(t);
   });
 
-  // ---- controls ----
-  playBtn.addEventListener('click', () => {
+  // ---- transport: dùng chung cho nút bấm, phím tắt và click sân khấu ----
+  function isPlaying() {
+    return clock.mode === 'virtual' ? clock.isRunning() : (!audio.paused && !audio.ended);
+  }
+  function playAudio() {
     clock.mode = 'audio';
-    audio.play().catch((e) => setStatus('Chưa phát được (' + e.name + '). Dùng "Chọn nhạc…" hoặc "Xem thử".'));
-  });
-  fileInput.addEventListener('change', (e) => {
-    const f = e.target.files && e.target.files[0]; if (!f) return;
-    audio.src = URL.createObjectURL(f); clock.mode = 'audio'; resetView(); audio.play().catch(() => {});
-  });
-  previewBtn.addEventListener('click', () => {
-    if (clock.mode === 'virtual' && clock.isRunning()) { clock.pauseVirtual(); if (videoOn) bgvideo.pause(); setStatus('⏸ Xem thử (tạm dừng)'); return; }
+    audio.play().catch((e) => setStatus('Playback blocked (' + e.name + '). Use "Load audio…" or "Preview".'));
+  }
+  function startPreview() {
     audio.pause();
     if (clock.mode !== 'virtual') { resetView(); clock.startVirtual(previewStart); }
     else clock.resumeVirtual();
     if (videoOn) bgvideo.play().catch(() => {});
-    setStatus('▶ Xem thử (không nhạc)'); startLoop();
+    setStatus('▶ Preview (no audio)'); startLoop();
+  }
+  function pausePlayback() {
+    if (clock.mode === 'virtual') { clock.pauseVirtual(); if (videoOn) bgvideo.pause(); setStatus('⏸ Preview (paused)'); }
+    else audio.pause();
+  }
+  function togglePlay() {
+    if (isPlaying()) pausePlayback();
+    else if (clock.mode === 'virtual') startPreview();
+    else playAudio();
+  }
+  function seekBy(delta) {
+    if (clock.mode === 'virtual') {
+      let nt = clock.getTime() + delta; nt = nt < 0 ? 0 : (nt > lastTime ? lastTime : nt);
+      clock.setVirtual(nt);
+      seeking = true; updateChrome(nt); onActiveChange(findActiveIndex(nt), true); updateHighlight(nt); syncVideo(nt); seeking = false;
+    } else {
+      const dur = audio.duration || lastTime;
+      let nt = (audio.currentTime || 0) + delta; nt = nt < 0 ? 0 : (nt > dur ? dur : nt);
+      audio.currentTime = nt; // -> 'seeking'/'seeked' tự refresh khung hình
+    }
+  }
+  function toggleFullscreen() {
+    const d = document, fs = d.fullscreenElement || d.webkitFullscreenElement;
+    if (!fs) { const r = d.documentElement; (r.requestFullscreen || r.webkitRequestFullscreen || function () {}).call(r); }
+    else { (d.exitFullscreen || d.webkitExitFullscreen || function () {}).call(d); }
+  }
+  function updateFsLabel() {
+    if (!fsBtn) return;
+    const fs = document.fullscreenElement || document.webkitFullscreenElement;
+    fsBtn.textContent = fs ? '⤢ Exit full screen' : '⛶ Fullscreen';
+  }
+  document.addEventListener('fullscreenchange', updateFsLabel);
+  document.addEventListener('webkitfullscreenchange', updateFsLabel);
+
+  // ---- controls ----
+  playBtn.addEventListener('click', function () { this.blur(); playAudio(); });
+  previewBtn.addEventListener('click', function () {
+    this.blur();
+    if (clock.mode === 'virtual' && clock.isRunning()) pausePlayback();
+    else startPreview();
+  });
+  fsBtn.addEventListener('click', function () { this.blur(); toggleFullscreen(); });
+  fileInput.addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0]; if (!f) return;
+    audio.src = URL.createObjectURL(f); clock.mode = 'audio'; resetView(); audio.play().catch(() => {});
+  });
+
+  // ---- phím tắt + click sân khấu (Space phát/dừng · ←/→ tua 5s · F toàn màn hình) ----
+  stage.addEventListener('click', () => togglePlay());
+  window.addEventListener('keydown', (e) => {
+    if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+    if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); togglePlay(); }
+    else if (e.key === 'ArrowLeft') { e.preventDefault(); seekBy(-5); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); seekBy(5); }
+    else if (e.key === 'f' || e.key === 'F') { e.preventDefault(); toggleFullscreen(); }
   });
 
   // ---- chrome tự ẩn ----
@@ -230,6 +284,6 @@
     },
   };
 
-  setStatus('Sẵn sàng — bấm "Xem thử" hoặc thả clip.mp3 vào assets/audio/ rồi Phát. Nền video: thả bg.mp4 vào assets/video/.');
+  setStatus('Ready — press "Preview", or drop clip.mp3 into assets/audio/ then Play. Video: drop bg.mp4 into assets/video/.');
   console.log('[KT] Aurora v2 · cues:', cues.length, '· word-level:', KT.WORD_DATA ? KT.WORD_DATA.length : 0, '· emphasis:', EMPH.size);
 })(window.KT);

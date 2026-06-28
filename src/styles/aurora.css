@@ -36,6 +36,8 @@ body.has-video .bgvideo { display: block; filter: brightness(0.92) saturate(1.06
 @keyframes driftB { from { transform: translate3d(4%,3%,0) scale(1.12); }  to { transform: translate3d(-5%,-2%,0) scale(1.04); } }
 /* khi có video: aurora chỉ còn là lớp phủ nhẹ tô màu lên video */
 body.has-video .aurora { opacity: 0.5; }
+/* video bật: đóng băng drift của aurora -> hết churn compositor (đỡ GPU/pin); vẫn giữ tông màu phủ lên video */
+body.has-video .au-a, body.has-video .au-b { animation-play-state: paused; }
 
 /* scrim: chỉ hiện khi có video, đảm bảo chữ vẫn đọc được */
 /* Scrim nhẹ: chỉ tối nhẹ mép trên/dưới (chừa controls) — để video vẫn hiện rõ ở giữa. */
@@ -70,7 +72,7 @@ body.has-video .scrim { opacity: 1; }
   font-family: 'Fraunces', Georgia, serif; font-weight: 300; font-optical-sizing: auto; color: #fff;
   font-size: clamp(2rem, 5.2vw, 4.1rem); line-height: 1.16; letter-spacing: 0.004em;
   /* quầng tối mạnh để chữ nổi trên video SẮC NÉT (giữ video rõ, không blur) — cho dòng "ở lại" (màu thường) */
-  text-shadow: 0 0 5px rgba(0,0,0,0.92), 0 2px 4px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.55); will-change: transform, opacity, filter;
+  text-shadow: 0 0 5px rgba(0,0,0,0.92), 0 2px 4px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.55);
 }
 /* scrim cục bộ: tấm nền tối mềm CHỈ sau dòng đang hát -> chữ nổi rõ trên vùng đèn
    sáng nhất mà video chỗ khác vẫn sắc nét. Blur lớn + bo tròn cho mềm như Apple Music. */
@@ -90,9 +92,11 @@ body.has-video .line.is-active::before { opacity: 1; }
 }
 
 .word { display: inline-block; margin: 0 0.16em; color: #fff;
-  transition: filter 0.3s ease; will-change: transform, opacity, filter; }
+  transition: filter 0.3s ease; }
 .mask { display: inline-block; overflow: hidden; vertical-align: bottom; padding: 0.12em 0; margin: -0.12em 0; }
-.word-inner { display: inline-block; will-change: transform; }
+.word-inner { display: inline-block; }
+/* will-change chỉ cho chữ của dòng đang hát (enter stagger) — không promote ~190 .word-inner vĩnh viễn */
+.line.is-active .word-inner { will-change: transform; }
 .char { display: inline-block; }
 
 /* Karaoke wipe per-char: dùng FILL ĐẶC (color-mix theo --cp), KHÔNG background-clip:text.
@@ -100,7 +104,8 @@ body.has-video .line.is-active::before { opacity: 1; }
    bg-clip:text bị xỉn ~30% -> chữ TRẮNG hoá XÁM, đọc rất khó trên video sáng (đúng bug user gặp).
    Fill đặc cho chữ sắc & sáng; JS set --cp (0..1) mỗi char -> màu nội suy "chưa hát"→trắng,
    vẫn sáng dần mượt trái→phải. */
-.line.is-active { --unlit: #9DB0CC; }                        /* phần chưa hát: steel-blue nhạt, vẫn rõ */
+/* will-change CHỈ ở dòng đang hát (+ chữ của nó) — không promote ~400 element vĩnh viễn -> nhẹ RAM/GPU, nhất là mobile */
+.line.is-active { --unlit: #9DB0CC; will-change: transform, opacity, filter; }  /* chưa hát: steel-blue nhạt, vẫn rõ */
 .line.is-active .char {
   --cp: 0;
   /* đã hát = ACCENT CỦA ĐOẠN (verse/chorus/bridge khác màu), chưa hát = steel-blue -> wipe đổi màu theo đoạn */
