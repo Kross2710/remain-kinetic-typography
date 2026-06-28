@@ -72,7 +72,9 @@
   function recenter(active, instant) {
     const el = lineEls[active]; if (!el) return;
     const target = stage.clientHeight * 0.58 - (el.offsetTop + el.offsetHeight / 2);
-    gsap.to(flow, { y: target, duration: instant ? 0 : 1.0, ease: KT.spring, overwrite: 'auto' });
+    // Cuộn câu: easing MƯỢT, KHÔNG overshoot (spring cũ nảy 1 nhịp -> cảm giác giật/nhanh).
+    // Dài hơn + power2.out: bám theo nhạc ngay nhưng giảm tốc êm như Apple Music.
+    gsap.to(flow, { y: target, duration: instant ? 0 : 1.35, ease: 'power2.out', overwrite: 'auto' });
   }
 
   function onActiveChange(idx, forceInstant) {

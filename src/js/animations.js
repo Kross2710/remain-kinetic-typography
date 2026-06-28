@@ -36,11 +36,11 @@ window.KT = window.KT || {};
       return;
     }
     gsap.fromTo(line,
-      { opacity: 0, y: 16, scale: 0.985, filter: 'blur(12px)' },
-      { opacity: 1, y: 0, scale: ACTIVE_SCALE, filter: 'blur(0px)', duration: 1.05, ease: 'power2.out', overwrite: 'auto' });
+      { opacity: 0, y: 14, scale: 0.99, filter: 'blur(10px)' },
+      { opacity: 1, y: 0, scale: ACTIVE_SCALE, filter: 'blur(0px)', duration: 1.25, ease: 'power2.out', overwrite: 'auto' });
     gsap.fromTo(inners,
       { yPercent: 110 },
-      { yPercent: 0, duration: 0.95, ease: 'power3.out', stagger: 0.045, overwrite: 'auto' });
+      { yPercent: 0, duration: 1.1, ease: 'power3.out', stagger: 0.05, overwrite: 'auto' });
   }
 
   // Dòng đã hát -> ở lại nhưng nhỏ, mờ & nhòe dần theo khoảng cách (depth).
@@ -48,7 +48,7 @@ window.KT = window.KT || {};
     gsap.to(line, {
       opacity: opacity == null ? 0.3 : opacity, scale: PAST_SCALE,
       filter: 'blur(' + (blur == null ? 0.5 : blur) + 'px)', y: 0,
-      duration: instant ? 0 : 0.85, ease: 'power2.out', overwrite: 'auto' });
+      duration: instant ? 0 : 1.05, ease: 'power2.out', overwrite: 'auto' });
   }
   // Kích hoạt lại (seek lùi) -> dội lò xo về ACTIVE_SCALE.
   function toActive(line, instant) {
