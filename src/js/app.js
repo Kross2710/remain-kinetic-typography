@@ -162,7 +162,10 @@
   }
 
   // ---- nền video ----
-  function enableVideo() { videoOn = true; document.body.classList.add('has-video'); }
+  function enableVideo() {
+    videoOn = true; document.body.classList.add('has-video');
+    bgvideo.play().catch(() => {}); // nền video tự phát (muted) ngay khi sẵn sàng, kể cả chưa bấm Phát
+  }
   bgvideo.addEventListener('loadeddata', enableVideo);
   bgvideo.addEventListener('error', () => { /* không có bg.mp4 -> giữ nền Aurora */ });
   bgvideo.src = 'assets/video/bg-web.mp4'; // bản nhẹ H.264 (commit lên repo); bg.mp4 gốc giữ ở local
