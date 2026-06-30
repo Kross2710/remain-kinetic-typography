@@ -1,0 +1,24 @@
+{
+  "name": "musicanimation",
+  "version": "1.0.0",
+  "description": "Web player phát nhạc và animate lyrics theo thời gian thực, kiểu kinetic typography. Bài demo: **\"Remain\" — Christian Kuria**. Giao diện **Aurora** (word-level, chữ tích tụ, đổi màu theo đoạn).",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Kross2710/remain-kinetic-typography.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Kross2710/remain-kinetic-typography/issues"
+  },
+  "homepage": "https://github.com/Kross2710/remain-kinetic-typography#readme"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "remain-export",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local frame-by-frame video export for the Remain kinetic-typography player (headless Chrome + ffmpeg).",
+  "scripts": {
+    "169": "node capture.mjs 16:9",
+    "916": "node capture.mjs 9:16",
+    "both": "node capture.mjs both",
+    "test": "node capture.mjs 16:9 --q 720 --fps 30 --seconds 12"
+  },
+  "dependencies": {
+    "puppeteer-core": "^25.2.1"
+  }
+}

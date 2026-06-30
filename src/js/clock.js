@@ -53,7 +53,11 @@ window.KT = window.KT || {};
   Clock.prototype.tickVirtual = function () {
     if (this.mode !== 'virtual' || !this._running) return;
     const now = performance.now();
-    this._t += (now - this._last) / 1000;
+    let dt = (now - this._last) / 1000;
+    // Tab ẩn / lag nặng -> rAF treo, delta phình to. BỎ QUA khoảng trống thay vì nhảy vọt:
+    // re-anchor mốc thời gian, giờ ảo "đợi" người dùng quay lại (không mất lyrics).
+    if (dt > 0.5) dt = 0;
+    this._t += dt;
     this._last = now;
   };
 

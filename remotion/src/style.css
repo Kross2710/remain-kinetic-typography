@@ -1,0 +1,72 @@
+/* Port các phần cốt lõi từ src/styles/aurora.css cho Remotion (bỏ phần controls/chrome tương tác).
+ * Giữ NGUYÊN: cấu trúc .line > .word > .mask > .word-inner > .char (mask để chữ trượt lên),
+ * và karaoke wipe FILL ĐẶC color-mix theo --cp (KHÔNG background-clip:text — Chromium render xám). */
+
+.kt-root {
+  --base: #0b0e16;
+  --ink: #eaedf5;
+  background: var(--base);
+  color: var(--ink);
+  overflow: hidden;
+}
+
+/* ---------- nền video (tùy chọn, LUÔN muted) ---------- */
+.kt-bgvideo { position: absolute; inset: 0; z-index: 0; }
+
+/* ---------- trường Aurora ---------- */
+.kt-aurora { position: absolute; inset: -25%; z-index: 1; pointer-events: none; }
+/* khi có video: aurora chỉ còn lớp phủ nhẹ tô màu lên video */
+.kt-has-video .kt-aurora { opacity: 0.5; }
+
+/* scrim: chỉ khi có video — tối nhẹ mép trên/dưới để chữ vẫn đọc rõ, giữa vẫn thấy video */
+.kt-scrim { position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: linear-gradient(180deg, rgba(8,9,14,0.32), rgba(8,9,14,0.08) 45%, rgba(8,9,14,0.55)); }
+.kt-au { position: absolute; inset: 0; mix-blend-mode: screen; opacity: 0.62; }
+.kt-au-a { background: radial-gradient(48% 40% at 34% 38%, var(--au1) 0%, transparent 60%); }
+.kt-au-b { background: radial-gradient(54% 46% at 68% 64%, var(--au2) 0%, transparent 62%); }
+
+.kt-vignette { position: absolute; inset: 0; z-index: 2; pointer-events: none;
+  background: radial-gradient(125% 115% at 50% 46%, transparent 48%, rgba(0,0,0,0.62) 100%); }
+.kt-grain { position: absolute; inset: 0; z-index: 3; pointer-events: none; opacity: 0.05; mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='150' height='150'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"); }
+
+/* ---------- sân khấu: clip + mask mép trên/dưới · flow cuộn bằng translateY ---------- */
+.kt-stage { position: absolute; inset: 0; z-index: 4; overflow: hidden;
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 15%, #000 82%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 15%, #000 82%, transparent 100%); }
+.kt-flow { position: absolute; left: 0; right: 0; top: 0; padding: 0 7vw;
+  display: flex; flex-direction: column; gap: 0.42em; text-align: center; will-change: transform; }
+
+.kt-line {
+  position: relative;
+  /* co về đúng bề rộng CHỮ (vẫn wrap khi quá dài nhờ max-width) -> tấm nền ::before ôm sát chữ,
+     không còn vệt tối kéo dài hết dòng với câu ngắn */
+  width: fit-content; max-width: 100%; align-self: center;
+  font-family: 'Fraunces', Georgia, serif; font-weight: 300; color: #fff;
+  font-size: clamp(2rem, 5.2vw, 4.1rem); line-height: 1.16; letter-spacing: 0.004em;
+  text-shadow: 0 0 5px rgba(0,0,0,0.92), 0 2px 4px rgba(0,0,0,0.95), 0 0 22px rgba(0,0,0,0.55);
+}
+.kt-line.kt-hook {
+  font-family: 'Instrument Serif', Georgia, serif; font-weight: 400; font-style: italic;
+  font-size: clamp(2.7rem, 7vw, 5.4rem); line-height: 1.04; letter-spacing: 0.006em;
+}
+/* nền tối cục bộ sau dòng đang hát -> chữ nổi rõ (nhẹ hơn bản video vì nền aurora đã dịu) */
+.kt-line.kt-active::before {
+  content: ""; position: absolute; z-index: -1;
+  left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 116%; height: 132%; border-radius: 999px;
+  background: radial-gradient(60% 64% at 50% 50%, rgba(6,8,14,0.5) 0%, rgba(6,8,14,0.26) 55%, transparent 78%);
+  filter: blur(14px); pointer-events: none;
+}
+
+.kt-word { display: inline-block; margin: 0 0.16em; color: #fff; }
+.kt-mask { display: inline-block; overflow: hidden; vertical-align: bottom; padding: 0.12em 0; margin: -0.12em 0; }
+.kt-word-inner { display: inline-block; }
+.kt-line.kt-active .kt-word { filter: drop-shadow(0 1px 2px rgba(0,0,0,0.9)) drop-shadow(0 0 5px rgba(0,0,0,0.7)); }
+.kt-char { display: inline-block; }
+
+/* Karaoke wipe: đã hát = accent đoạn, chưa hát = steel-blue; --cp (0..1) nội suy mỗi char. */
+.kt-line.kt-active { --unlit: #9db0cc; }
+.kt-line.kt-active .kt-char {
+  color: color-mix(in srgb, var(--accent) calc(var(--cp) * 100%), var(--unlit));
+}

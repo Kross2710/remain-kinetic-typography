@@ -1,0 +1,9 @@
+node_modules/
+out/
+.DS_Store
+
+# media assets (local only — không commit lên git)
+public/*.mp4
+public/*.flac
+public/*.mp3
+public/*.wav
