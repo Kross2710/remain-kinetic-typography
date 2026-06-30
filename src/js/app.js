@@ -5,6 +5,7 @@
 (function (KT) {
   const cues = KT.parseLRC(KT.RAW_LRC);
   const EMPH = new Set((KT.EMPHASIS || []).map((w) => w.toLowerCase()));
+  const WIPE_MAX_SEC = 0.8;  // trần thời lượng wipe 1 từ: chữ cuối câu ngân dài KHÔNG còn "bò" chậm (wipe nhanh rồi giữ sáng)
   function normWord(s) { return (s || '').toLowerCase().replace(/[^a-z']/g, ''); }
 
   const stage = document.getElementById('stage');
@@ -12,10 +13,7 @@
   const audio = document.getElementById('audio');
   const bgvideo = document.getElementById('bgvideo');
   const playBtn = document.getElementById('playBtn');
-  const previewBtn = document.getElementById('previewBtn');
   const fsBtn = document.getElementById('fsBtn');
-  const fileInput = document.getElementById('fileInput');
-  const videoInput = document.getElementById('videoInput');
   const statusEl = document.getElementById('status');
   const eyebrowEl = document.getElementById('eyebrow');
   const timecodeEl = document.getElementById('timecode');
@@ -31,7 +29,11 @@
   cues.forEach((c, i) => {
     if (!c.text) { lineEls[i] = null; return; }
     const el = KT.anim.buildLineEl(c.text);
-    if (KT.anim.HOOK_RE.test(c.text)) el.classList.add('hook');
+    if (KT.anim.HOOK_RE.test(c.text)) {
+      el.classList.add('hook');
+      // giấu từ "love" tới khi singer hát nó (ink-soak reveal) — chỉ trong dòng hook
+      el.querySelectorAll('.word').forEach((w) => { if (normWord(w.textContent) === 'love') w.classList.add('is-held'); });
+    }
     el.classList.add('is-future');
     flow.appendChild(el);
     gsap.set(el, { opacity: 0 });
@@ -55,11 +57,12 @@
         const dist = active - i;                          // 1 = gần nhất
         const op = Math.max(0, 0.62 - (dist - 1) * 0.15); // mờ dần theo khoảng cách (sáng hơn để dễ đọc)
         const blur = Math.min(0.6 + (dist - 1) * 0.85, 3.4); // nhòe dần (depth)
-        KT.anim.toPast(el, instant, op, blur);
+        KT.anim.toPast(el, instant, op, blur, KT.anim.EXHALE_RISE); // exhale-out: nhích lên khi thở ra
       } else if (i === active) {
         el.classList.remove('is-past', 'is-future'); el.classList.add('is-active');
-        if (instant) KT.anim.enter(el, true);
-        else if (!el.dataset.seen) KT.anim.enter(el, false);
+        const enterFn = el.classList.contains('hook') ? KT.anim.enterInk : KT.anim.enter; // hook -> ink soak
+        if (instant) enterFn(el, true);
+        else if (!el.dataset.seen) enterFn(el, false);
         else KT.anim.toActive(el, false);
         el.dataset.seen = '1';
       } else {
@@ -104,7 +107,8 @@
 
       // chữ đang hát: cập nhật fill từng ký tự MỖI FRAME (wipe liên tục)
       if (i === act) {
-        const d = Math.max(0.0001, seg.end - seg.start);
+        const wipeEnd = Math.min(seg.end, seg.start + WIPE_MAX_SEC);  // cap: từ ngắn wipe đúng nhịp, từ ngân dài wipe trong 0.6s rồi GIỮ sáng
+        const d = Math.max(0.0001, wipeEnd - seg.start);
         let base = (t - seg.start) / d; if (base < 0) base = 0; else if (base > 1) base = 1;
         const n = chars.length;
         for (let j = 0; j < n; j++) { let cp = base * n - j; cp = cp < 0 ? 0 : (cp > 1 ? 1 : cp); chars[j].style.setProperty('--cp', cp.toFixed(3)); }
@@ -112,12 +116,14 @@
 
       if (wordState[i] === st) continue;
       wordState[i] = st;
-      if (st === 'sung') { for (let j = 0; j < chars.length; j++) chars[j].style.setProperty('--cp', '1'); }
-      else if (st === 'future') { for (let j = 0; j < chars.length; j++) chars[j].style.setProperty('--cp', '0'); }
+      const held = el.classList.contains('is-held');   // từ "love" được giấu tới khi hát
+      if (st === 'sung') { for (let j = 0; j < chars.length; j++) chars[j].style.setProperty('--cp', '1'); if (held) KT.anim.revealHeld(el, true); }
+      else if (st === 'future') { for (let j = 0; j < chars.length; j++) chars[j].style.setProperty('--cp', '0'); if (held) KT.anim.hideHeld(el); }
       el.classList.remove('is-current', 'is-emph');
       if (st === 'current') {
         // KHÔNG pop scale nữa (tránh giật) — chỉ đổi class để lên quầng sáng mượt qua CSS transition.
         el.classList.add('is-current');
+        if (held) KT.anim.revealHeld(el, seeking);   // "love" THẤM vào đúng lúc được hát (instant khi đang seek)
         if (EMPH.has(normWord(el.textContent))) el.classList.add('is-emph');
       }
     }
@@ -152,7 +158,7 @@
     const t = clock.getTime();
     if (clock.mode === 'virtual' && t > lastTime + 3) {
       clock.endVirtual(); if (videoOn) bgvideo.pause();
-      setStatus('■ End (preview). Press "Preview" to replay.');
+      setStatus('■ End'); updatePlayLabel();
       rafId = null; return;
     }
     updateChrome(t);
@@ -204,27 +210,44 @@
   if (desktopMQ.addEventListener) desktopMQ.addEventListener('change', swapResponsiveVideo);
   else if (desktopMQ.addListener) desktopMQ.addListener(swapResponsiveVideo); // Safari cũ
 
-  videoInput.addEventListener('change', (e) => {
-    const f = e.target.files && e.target.files[0]; if (!f) return;
-    userVideo = true;
-    bgvideo.src = URL.createObjectURL(f); enableVideo();
-    if (clock.isRunning()) bgvideo.play().catch(() => {});
-  });
-
   // ---- audio events ----
-  audio.addEventListener('play', () => { clock.mode = 'audio'; setStatus('▶ Playing'); if (videoOn) bgvideo.play().catch(() => {}); startLoop(); });
-  audio.addEventListener('pause', () => { if (videoOn) bgvideo.pause(); if (!audio.ended) setStatus('⏸ Paused'); });
-  audio.addEventListener('ended', () => { if (videoOn) bgvideo.pause(); setStatus('■ End'); });
+  audio.addEventListener('play', () => { clock.mode = 'audio'; setStatus('▶ Playing'); updatePlayLabel(); if (videoOn) bgvideo.play().catch(() => {}); startLoop(); });
+  audio.addEventListener('pause', () => { if (videoOn) bgvideo.pause(); if (!audio.ended) setStatus('⏸ Paused'); updatePlayLabel(); });
+  audio.addEventListener('ended', () => { if (videoOn) bgvideo.pause(); setStatus('■ End'); updatePlayLabel(); });
   audio.addEventListener('seeking', () => { seeking = true; });
   audio.addEventListener('seeked', () => {
     seeking = false; const t = clock.getTime();
     updateChrome(t); onActiveChange(findActiveIndex(t), true); updateHighlight(t); syncVideo(t);
   });
 
+  // ---- chống desync: snap mọi thứ về đúng mốc đồng hồ (instant) rồi đảm bảo vòng lặp chạy ----
+  function resyncNow() {
+    const t = clock.getTime();
+    updateChrome(t);
+    onActiveChange(findActiveIndex(t), true);   // instant: không animate khi đang bù lệch
+    updateHighlight(t);
+    syncVideo(t);
+    updatePlayLabel();
+    if (clock.isRunning()) startLoop();          // startLoop tự no-op nếu rAF đang treo (rafId != null)
+  }
+
+  // Tab ẩn -> rAF đóng băng nhưng audio.currentTime / giờ thực vẫn trôi. Khi quay lại: re-anchor + snap.
+  let hiddenWhileRunning = false;
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      hiddenWhileRunning = clock.isRunning();
+      if (clock.mode === 'virtual') clock.pauseVirtual(); // dừng đếm giờ ảo khi không nhìn thấy
+      return;
+    }
+    if (clock.mode === 'virtual' && hiddenWhileRunning) clock.resumeVirtual(); // re-anchor _last, không nhảy vọt
+    resyncNow();
+  });
+
   // ---- transport: dùng chung cho nút bấm, phím tắt và click sân khấu ----
   function isPlaying() {
     return clock.mode === 'virtual' ? clock.isRunning() : (!audio.paused && !audio.ended);
   }
+  function updatePlayLabel() { if (playBtn) playBtn.textContent = isPlaying() ? '⏸ Pause' : '▶ Play'; }
   function playAudio() {
     clock.mode = 'audio';
     audio.play().catch((e) => setStatus('Playback blocked (' + e.name + '). Use "Load audio…" or "Preview".'));
@@ -244,6 +267,7 @@
     if (isPlaying()) pausePlayback();
     else if (clock.mode === 'virtual') startPreview();
     else playAudio();
+    updatePlayLabel();
   }
   function seekBy(delta) {
     if (clock.mode === 'virtual') {
@@ -270,17 +294,8 @@
   document.addEventListener('webkitfullscreenchange', updateFsLabel);
 
   // ---- controls ----
-  playBtn.addEventListener('click', function () { this.blur(); playAudio(); });
-  previewBtn.addEventListener('click', function () {
-    this.blur();
-    if (clock.mode === 'virtual' && clock.isRunning()) pausePlayback();
-    else startPreview();
-  });
+  playBtn.addEventListener('click', function () { this.blur(); togglePlay(); });
   fsBtn.addEventListener('click', function () { this.blur(); toggleFullscreen(); });
-  fileInput.addEventListener('change', (e) => {
-    const f = e.target.files && e.target.files[0]; if (!f) return;
-    audio.src = URL.createObjectURL(f); clock.mode = 'audio'; resetView(); audio.play().catch(() => {});
-  });
 
   // ---- phím tắt + click sân khấu (Space phát/dừng · ←/→ tua 5s · F toàn màn hình) ----
   stage.addEventListener('click', () => togglePlay());
@@ -311,6 +326,93 @@
     },
   };
 
-  setStatus('Ready — press "Preview", or drop clip.mp3 into assets/audio/ then Play. Video: drop bg.mp4 into assets/video/.');
+  // ===================== CHẾ ĐỘ RENDER (xuất video, tất định) =====================
+  // Dùng bởi export/capture.mjs qua headless Chrome. KHÔNG tự chạy với người dùng thường.
+  // Ý tưởng: GIÀNH quyền điều khiển ticker của GSAP (bỏ updateRoot khỏi rAF) rồi mỗi frame
+  // tự gọi gsap.updateRoot(t) -> mọi tween (vào dòng, cuộn, scale, lerp màu aurora) chạy
+  // ĐÚNG theo thời gian frame, không phụ thuộc đồng hồ thực -> screenshot tất định.
+
+  // Chờ <video> vẽ XONG đúng frame tại thời điểm t (gate bằng requestVideoFrameCallback, KHÔNG
+  // dùng 'seeked' vì seeked != đã paint). md.mediaTime là thời điểm của frame ĐANG hiển thị.
+  // Tua <video> tới frame chứa thời điểm t rồi chờ PAINT. Nguồn nền 30fps, export tới 60fps ->
+  // KHÔNG gate "mediaTime >= t" (sẽ TREO ở frame lẻ vì frame nguồn không bao giờ chạm t lẻ).
+  // Mỗi t là giá trị TĂNG DẦN khác nhau -> 'seeked' luôn fire -> resolve nhanh (không timeout,
+  // trừ đúng frame 0 no-op). rVFC cho mốc paint chính xác; setTimeout là trần cứng chống treo.
+  function seekVideoToFrame(v, t) {
+    return new Promise((resolve) => {
+      if (!v) { requestAnimationFrame(() => requestAnimationFrame(resolve)); return; }
+      const dur = (v.duration && isFinite(v.duration)) ? v.duration : Infinity;
+      const target = Math.max(0, Math.min(t, dur - 1e-3));
+      let done = false;
+      const finish = () => {
+        if (done) return; done = true; clearTimeout(tid);
+        requestAnimationFrame(() => requestAnimationFrame(resolve));   // 2 rAF -> chắc đã paint
+      };
+      const tid = setTimeout(finish, 300);                            // trần cứng: không bao giờ treo
+      if (typeof v.requestVideoFrameCallback === 'function') v.requestVideoFrameCallback(() => finish());
+      v.addEventListener('seeked', () => finish(), { once: true });   // đủ cho cả frame trùng nội bộ
+      try { v.currentTime = target; } catch (e) { finish(); }
+    });
+  }
+
+  let _exHidden = [];
+  KT.render = {
+    // opts: { aspect, videoSrc, duration }
+    begin(opts) {
+      opts = opts || {};
+      if (rafId != null) { cancelAnimationFrame(rafId); rafId = null; }   // dừng vòng lặp live
+      userVideo = true; videoOn = true;                                   // ép nền video, tắt auto-đổi theo màn hình
+      document.body.classList.add('has-video');
+      bgvideo.muted = true; bgvideo.setAttribute('playsinline', '');
+      if (opts.videoSrc) bgvideo.src = opts.videoSrc;
+      // ẩn chrome/controls/progress -> video sạch (chỉ chữ + nền)
+      _exHidden = ['.chrome', '.controls', '.progress-wrap'].map((s) => document.querySelector(s)).filter(Boolean);
+      _exHidden.forEach((el) => { el.dataset._exDisp = el.style.display; el.style.display = 'none'; });
+      document.body.classList.add('exporting');
+      // GIÀNH quyền điều khiển GSAP (thứ tự quan trọng)
+      gsap.ticker.lagSmoothing(0);
+      gsap.ticker.remove(gsap.updateRoot);
+      gsap.updateRoot(0);
+      // reset về t=0 tất định (instant)
+      resetView(); curActive = -1;
+      if (KT.aurora && KT.aurora.reset) KT.aurora.reset();   // màu aurora về mốc đầu (tất định)
+      onActiveChange(findActiveIndex(0), true);
+      updateHighlight(0); updateChrome(0);
+      gsap.updateRoot(0);
+      // warm-up giải mã video rồi pause (seek loop sẽ tự tua từng frame)
+      return Promise.resolve(bgvideo.play()).catch(() => {}).then(() => {
+        bgvideo.pause();
+        return new Promise((res) => {
+          if (bgvideo.readyState >= 2) return res();
+          bgvideo.addEventListener('loadeddata', () => res(), { once: true });
+        });
+      });
+    },
+    // step(t): dựng trạng thái GSAP/lyrics tới t mà KHÔNG tua video — dùng cho WARMUP của render chia khúc.
+    step(t) {
+      gsap.ticker.remove(gsap.updateRoot);          // bảo hiểm: không cho rAF tự tiến thời gian
+      const idx = findActiveIndex(t);
+      gsap.updateRoot(t);                            // (1) tiến mọi tween hiện có tới t
+      if (idx !== curActive) onActiveChange(idx, false); // (2) tween dòng mới anchor _start=t (+ recenter + words)
+      updateHighlight(t);                            // (3) wipe --cp + (chrome màu) theo t
+      updateChrome(t);
+      gsap.updateRoot(t);                            // (4) render "from-state" của tween mới tại t
+      gsap.ticker.remove(gsap.updateRoot);           // chốt: tween mới có thể re-add updateRoot -> gỡ lại
+    },
+    // seek(t): GỌI ĐÚNG 1 LẦN/frame, t = giây tuyệt đối. Promise resolve khi đã paint.
+    seek(t) {
+      this.step(t);
+      return seekVideoToFrame(bgvideo, t);
+    },
+    end() {
+      document.body.classList.remove('exporting');
+      _exHidden.forEach((el) => { el.style.display = el.dataset._exDisp || ''; delete el.dataset._exDisp; });
+      _exHidden = [];
+      gsap.ticker.add(gsap.updateRoot);             // trả lại auto-advance
+      gsap.ticker.lagSmoothing(500);
+    },
+  };
+
+  setStatus('Ready — press Play.');
   console.log('[KT] Aurora v2 · cues:', cues.length, '· word-level:', KT.WORD_DATA ? KT.WORD_DATA.length : 0, '· emphasis:', EMPH.size);
 })(window.KT);

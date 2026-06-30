@@ -41,5 +41,5 @@ window.KT = window.KT || {};
     });
   }
 
-  KT.aurora = { setSection };
+  KT.aurora = { setSection, reset() { cur = null; lastKind = null; if (tween) { tween.kill(); tween = null; } } };
 })(window.KT);

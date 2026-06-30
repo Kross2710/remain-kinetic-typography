@@ -14,3 +14,8 @@ assets/video/*.m4v
 
 # scratch
 *.log
+
+# export tool (local video render): deps + outputs không commit
+export/node_modules/
+export/out/
+export/frames/
