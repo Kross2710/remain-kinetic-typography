@@ -1,3 +1,6 @@
+# Live Demo
+[https://kross2710.github.io/remain-kinetic-typography]
+
 # Remain — Kinetic Typography Lyric Player
 
 Web player phát nhạc và animate lyrics theo thời gian thực, kiểu kinetic typography.
