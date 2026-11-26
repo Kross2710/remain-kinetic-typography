@@ -39,12 +39,37 @@ try {
   await page.locator('.stage video').waitFor();
   assert.equal(await page.locator('.stage video').evaluate(el=>el.muted),true,'External audio replaces the video soundtrack');
   assert.equal(await slider.getAttribute('max'),'959');
-  await page.locator('#lyrics').fill('[00:03.00]Cảnh màu xanh\n[00:31.00]Sau ba mươi giây');
+  await page.locator('#lyrics').fill('[00:03.00]Cảnh màu xanh\n[00:05.00]Câu tiếp theo\n[00:31.00]Sau ba mươi giây');
   await page.getByRole('button',{name:'Áp dụng lời'}).click();
-  await slider.fill('945');
+  const sync=page.getByRole('region',{name:'03 · Canh từng từ'});
+  const follow=sync.getByRole('button',{name:'Theo video',exact:true});
+  assert.equal(await follow.getAttribute('aria-pressed'),'true');
+  await slider.fill('933');
   await page.locator('.stage [aria-label="Sau ba mươi giây"]').waitFor();
+  await sync.locator('[aria-current="time"]').getByText('Sau',{exact:true}).waitFor();
   await slider.fill('105');
   await page.waitForFunction(()=>Math.abs(document.querySelector('.stage video')?.currentTime-3.5)<.12);
+  await sync.locator('[aria-current="time"]').getByText('Cảnh',{exact:true}).waitFor();
+  await sync.getByRole('button',{name:/^Cảnh /}).click();
+  await slider.fill('933');
+  await sync.getByRole('button',{name:/^Cảnh /,pressed:true}).waitFor();
+  assert.equal(await follow.getAttribute('aria-pressed'),'false');
+  await follow.click();
+  await sync.locator('[aria-current="time"]').getByText('Sau',{exact:true}).waitFor();
+  await slider.fill('141');
+  await page.getByRole('button',{name:'Phát',exact:true}).click();
+  await sync.locator('[aria-current="time"]').getByText('Câu',{exact:true}).waitFor({timeout:5000});
+  await page.getByRole('button',{name:'Tạm dừng',exact:true}).click();
+  if (process.env.STUDIO_SYNC_SCREENSHOT) {
+    await page.evaluate(()=>window.scrollTo(0,0));
+    await page.screenshot({path:process.env.STUDIO_SYNC_SCREENSHOT});
+  }
+  if (process.env.STUDIO_SYNC_MOBILE_SCREENSHOT) {
+    await page.setViewportSize({width:390,height:844});
+    await page.evaluate(()=>window.scrollTo(0,0));
+    await page.screenshot({path:process.env.STUDIO_SYNC_MOBILE_SCREENSHOT});
+    await page.setViewportSize({width:1440,height:900});
+  }
   await page.getByLabel('Phạm vi xuất').selectOption('range');
   await page.getByLabel('Bắt đầu (giây)').fill('3');
   await page.getByLabel('Kết thúc (giây)').fill('5');
@@ -86,9 +111,16 @@ try {
   }
   assert.deepEqual(errors,[]);
   await page.setViewportSize({width:390,height:844});
+  // The breakpoint swap changes min-height, and buttons carry `transition-all`: settle it before measuring touch targets.
+  await page.evaluate(()=>document.getAnimations().forEach(animation=>animation.finish()));
   assert.equal(await workspace.evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length),1);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
-  console.log('Video loading, audio timeline >30s, clipping controls, lyric preview and responsive layout verified.');
+  const markButton=sync.getByRole('button',{name:'Đóng dấu từ',exact:true});
+  assert.ok((await markButton.boundingBox()).height>=44);
+  assert.ok((await sync.boundingBox()).y<(await page.getByRole('heading',{name:'01 · Media'}).boundingBox()).y);
+  await page.setViewportSize({width:320,height:740});
+  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  console.log('Video-follow highlighting/seek, locked timing, video loading and 320px responsive layout verified.');
 } finally {
   await browser?.close();
   await rm(scratch,{recursive:true,force:true});

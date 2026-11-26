@@ -5,6 +5,7 @@ import {activeAt,clipCues,DEMO_SECONDS,FPS,importLyrics,MAX_AUDIO_BYTES,MAX_SECO
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {Textarea} from '@/components/ui/textarea';
+import {LyricSyncPanel} from '@/components/LyricSyncPanel';
 
 const sample='[00:00.00]Một nhịp thở\n[00:05.00]Rồi chữ bắt đầu chuyển động\n[00:12.00]Mỗi từ theo một nhịp\n[00:22.00]Đến lượt bạn kể chuyện';
 const seconds=(n:number)=>n.toFixed(2)+'s';
@@ -22,7 +23,8 @@ export default function Studio() {
   const [wide,setWide]=useState(false);
   const [draft,setDraft]=useState(sample);
   const [cues,setCues]=useState(()=>importLyrics(sample,DEMO_SECONDS));
-  const [selection,select]=useState<[number,number]>([0,0]);
+  const [selection,select]=useState<[number,number]|null>([0,0]);
+  const [following,setFollowing]=useState(true);
   const [frame,setFrame]=useState(0);
   const [playing,setPlaying]=useState(false);
   const [busy,setBusy]=useState(false);
@@ -45,9 +47,11 @@ export default function Studio() {
   const visibleCues=useMemo(()=>clipCues(cues,duration),[cues,duration]);
   const project=useMemo(()=>({width:wide?1280:720,height:wide?720:1280,durationInFrames:length,cues:visibleCues,videoDurationInFrames:videoLength}),[wide,length,visibleCues,videoLength]);
   const inputProps=useMemo(()=>({project,audioSrc:audio?.src ?? null,videoSrc:video?.src ?? null}),[project,audio,video]);
-  const [line,word]=selection;
-  const [liveLine]=activeAt(visibleCues,time);
+  const [liveLine,liveWord]=activeAt(visibleCues,time);
+  const line=following?Math.max(0,liveLine):selection?.[0] ?? Math.max(0,cues.length-1);
   const cue=cues[line];
+  const canTap=following?Boolean(cue?.words.some(w=>!w.confirmed)):Boolean(selection && cue);
+
 
   useEffect(()=>{
     const p=player.current;
@@ -72,7 +76,7 @@ export default function Studio() {
     setFrame(clamped);
   }
   function changeLyrics(text:string) {
-    try {setCues(text.trim()?importLyrics(text,duration,MAX_SECONDS):[]);select([0,0]);setError('');setNotice('Đã cập nhật lời.');}
+    try {setCues(text.trim()?importLyrics(text,duration,MAX_SECONDS):[]);select([0,0]);setFollowing(true);setError('');setNotice('Đã cập nhật lời.');}
     catch(e){setError(errText(e));}
   }
   function applyLyrics(e:FormEvent) {e.preventDefault();changeLyrics(draft);}
@@ -136,12 +140,45 @@ export default function Studio() {
     // Keyboard activation retains focus on Play, and no viewport scroll is needed.
     if (startWithPointer && cue) tapPanel.current?.focus({preventScroll:true});
   }
-  function tap() {
-    if (!cue) return;
+  function lockWord(word:number) {
+    setFollowing(false);
+    select([line,word]);
+  }
+  function enterMarkMode() {
+    if (!following || !cue) return;
+    const unmarked=cue.words.findIndex(w=>!w.confirmed);
+    lockWord(unmarked<0?Math.max(0,liveWord):unmarked);
+  }
+  function pickLine(i:number) {
+    if (!cues[i]) return;
+    setFollowing(false);
+    select([i,0]);
+    seek((cues[i].start-0.3)*FPS);
+  }
+  function editLineStart(value:number) {
+    if (!cue) return false;
     try {
-      setCues(setWordStart(cues,line,word,(player.current?.getCurrentFrame() ?? frame)/FPS,duration));
-      if(word+1<cue.words.length)select([line,word+1]);
-      else if(line+1<cues.length)select([line+1,0]);
+      setCues(setCueStart(cues,line,value,value>=duration || cue.start>=duration ? MAX_SECONDS : duration));
+      setError('');seek(value*FPS);
+      return true;
+    } catch(err){setError(errText(err));return false;}
+  }
+  function tap() {
+    const now=(player.current?.getCurrentFrame() ?? frame)/FPS;
+    let target=selection;
+    if (following) {
+      const i=Math.max(0,activeAt(visibleCues,now)[0]);
+      const j=cues[i]?.words.findIndex(w=>!w.confirmed) ?? -1;
+      target=j<0?null:[i,j];
+    }
+    if (!target) return;
+    const [i,j]=target;
+    try {
+      setCues(setWordStart(cues,i,j,now,duration));
+      setFollowing(false);
+      if(j+1<cues[i].words.length)select([i,j+1]);
+      else if(i+1<cues.length)select([i+1,0]);
+      else select(null);
       setError('');
     } catch(e){setError(errText(e));}
   }
@@ -170,7 +207,7 @@ export default function Studio() {
       // playback Space taps even if the transport Play button retains focus.
       if (space && e.target.closest('select, a, button') && !e.target.closest('.words button') && !(player.current?.isPlaying() && e.target.closest('.play-toggle'))) return;
     }
-    if (!cue) return;
+    if (!cue || (!following && !selection)) return;
     e.preventDefault();
     tap();
   });
@@ -196,6 +233,10 @@ export default function Studio() {
         <div className="transport"><Button type="button" variant="outline" size="icon" onClick={()=>seek(0)} title="Về đầu clip" aria-label="Về đầu clip">⏮</Button><Button type="button" variant="outline" className="play-toggle" onClick={togglePlayback}>{playing?'Tạm dừng':'Phát'}</Button><output>{seconds(time)} <span>/ {seconds(duration)}</span></output></div>
       </section>
       <aside className="inspector" aria-label="Nội dung project">
+        <LyricSyncPanel panelRef={tapPanel} cues={cues} line={line} selectedWord={following?null:selection?.[1] ?? null}
+          liveLine={liveLine} liveWord={liveWord} time={time} playing={playing} following={following}
+          complete={!following && selection===null} canTap={canTap} onFollow={()=>setFollowing(true)}
+          onMarkMode={enterMarkMode} onLine={pickLine} onWord={lockWord} onLineStart={editLineStart} onTap={tap}/>
         <section className="panel"><div className="section-bar"><h2>01 · Media</h2><span className="subtle">Nhạc 25 MiB · Video 100 MiB</span></div>
           <label htmlFor="audio-file">Chọn nhạc từ máy</label><Input id="audio-file" type="file" accept="audio/*,.mp3,.m4a,.wav,.flac,.ogg" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void chooseMedia('audio',file);}}/>
           {audio && <div className="flex min-w-0 items-center justify-between gap-2.5"><span className="filename">{audio.file.name}</span><Button type="button" variant="outline" size="sm" onClick={()=>removeMedia('audio')}>Gỡ nhạc</Button></div>}
@@ -205,16 +246,6 @@ export default function Studio() {
         </section>
         <section className="panel"><div className="section-bar"><h2>02 · Lời</h2><label className="filebutton">Nhập .LRC<input type="file" accept=".lrc,text/plain" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void chooseLrc(file);}}/></label></div>
           <form onSubmit={applyLyrics}><label htmlFor="lyrics">Dán lời, mỗi câu một dòng, hoặc dán LRC</label><Textarea id="lyrics" className="field-sizing-fixed" rows={5} maxLength={16000} value={draft} onChange={e=>setDraft(e.target.value)}/><Button type="submit" variant="outline">Áp dụng lời</Button></form>
-        </section>
-        <section className="panel" ref={tapPanel} tabIndex={-1} aria-labelledby="tap-panel-title"><div className="section-bar"><h2 id="tap-panel-title">03 · Canh từng từ</h2><span className="subtle">{cue?`${line+1} / ${cues.length}`:'0 / 0'}</span></div>
-          {cue && <><label htmlFor="cue-picker">Dòng đang sửa</label><select id="cue-picker" value={line} onChange={e=>{const i=Number(e.target.value);select([i,0]);seek((cues[i].start-0.3)*FPS);}}>{cues.map((c,i)=><option key={i} value={i}>{i+1}. {c.text}</option>)}</select>
-          <label className="cue-start-field flex items-center justify-between gap-2">Mốc đầu dòng (giây)<Input className="w-[90px]" key={`${line}:${cue.start}`} type="number" min="0" max={MAX_SECONDS} step="0.01" defaultValue={cue.start} onBlur={e=>{
-            const value=e.currentTarget.valueAsNumber;if(value===cue.start)return;
-            try{setCues(setCueStart(cues,line,value,value>=duration || cue.start>=duration ? MAX_SECONDS : duration));setError('');seek(value*FPS);}
-            catch(err){e.currentTarget.value=String(cue.start);setError(errText(err));}
-          }}/></label>
-          <div className="words">{cue.words.map((w,i)=><Button type="button" key={i} size="sm" variant="outline" className="gap-1 px-2 aria-pressed:border-primary aria-pressed:bg-[#483120] aria-pressed:text-[#ffd89d]" aria-pressed={i===word} onClick={()=>select([line,i])}>{w.text} <small>{seconds(w.start)}</small></Button>)}</div>
-          <Button type="button" className="tap" variant="outline" aria-keyshortcuts="Space T" onClick={tap}>Đóng dấu từ</Button><p className="hint">Bấm Space hoặc T theo nhạc. Từ đầu tiên sẽ đặt lại mốc dòng.</p></>}
         </section>
       </aside>
     </main>

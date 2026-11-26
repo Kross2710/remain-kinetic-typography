@@ -90,6 +90,17 @@ try {
   await linePicker.focus();
   await page.keyboard.press('t');
   await page.getByRole('button',{name:/^gặp /,pressed:true}).waitFor({timeout:3000});
+  await seek(25.4);
+  await page.keyboard.press('t');
+  await page.getByRole('button',{name:/^lại /,pressed:true}).waitFor({timeout:3000});
+  await seek(26);
+  await page.keyboard.press('t');
+  await tapPanel.getByText('Đã tới cuối lời', {exact:true}).waitFor({timeout:3000});
+  const lastWord=tapPanel.getByRole('button',{name:/^lại /});
+  const finalStamp=await lastWord.innerText();
+  await seek(27);
+  await page.keyboard.press('t');
+  assert.equal(await lastWord.innerText(),finalStamp);
   if (process.env.STUDIO_SCREENSHOT) await page.screenshot({path:process.env.STUDIO_SCREENSHOT});
   if (!process.env.STUDIO_PREVIEW_ONLY) {
     const download = page.waitForEvent('download',{timeout:240_000});
