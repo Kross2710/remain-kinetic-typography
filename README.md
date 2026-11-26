@@ -1,6 +1,10 @@
 # Live Demo
 [https://kross2710.github.io/remain-kinetic-typography]
 
+## Remain Studio · bản thử nghiệm
+
+Chỉnh lời, canh từng từ và xuất video MP4 ngay từ giao diện web. Studio chạy riêng trên máy cài Node.js và FFmpeg; không thay thế player ở GitHub Pages. [Hướng dẫn chạy Studio local](remotion/studio/README.md).
+
 # Remain — Kinetic Typography Lyric Player
 
 Web player phát nhạc và animate lyrics theo thời gian thực, kiểu kinetic typography.

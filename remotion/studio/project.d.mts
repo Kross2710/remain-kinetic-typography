@@ -1,0 +1,17 @@
+export type Word = {text:string; start:number; confirmed?:boolean};
+export type Cue = {text:string; start:number; words:Word[]};
+export type RenderRange = {startFrame:number; endFrame:number};
+export type Project = {width:number; height:number; durationInFrames:number; cues:Cue[]; videoDurationInFrames?:number; renderRange?:RenderRange};
+export const FPS:number;
+export const MAX_SECONDS:number;
+export const DEMO_SECONDS:number;
+export const MAX_AUDIO_BYTES:number;
+export const MAX_VIDEO_BYTES:number;
+export function timelineLength(audioSeconds:number|null,videoSeconds:number|null):number;
+export function rangeFromSeconds(start:string,end:string,length:number):RenderRange;
+export function importLyrics(source:string,duration:number,limit?:number):Cue[];
+export function clipCues(cues:Cue[],duration:number):Cue[];
+export function setWordStart(cues:Cue[],line:number,word:number,start:number,duration:number):Cue[];
+export function setCueStart(cues:Cue[],line:number,start:number,duration:number):Cue[];
+export function activeAt(cues:Cue[],time:number):[number,number];
+export function validateProject(input:unknown):Project;
