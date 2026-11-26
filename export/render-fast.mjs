@@ -23,8 +23,16 @@ const aspectArg = argv.find((a) => a === '16:9' || a === '9:16' || a === 'both')
 // Mặc định = số lõi PERFORMANCE (đo thực: vượt quá -> Chrome + x264 giành lõi, throughput TỤT mạnh).
 // Apple Silicon: hw.perflevel0.physicalcpu = số P-core; fallback nửa số lõi logic cho máy khác.
 function defaultWorkers() {
+  // macOS: số P-core (performance). sysctl không có trên Linux -> bỏ qua.
   try { const n = parseInt(execFileSync('sysctl', ['-n', 'hw.perflevel0.physicalcpu']).toString().trim(), 10); if (n > 0) return n; } catch (e) {}
-  try { return Math.max(2, Math.floor(os.cpus().length / 2)); } catch (e) {}
+  // Linux: số lõi VẬT LÝ từ lscpu (Core(s) per socket × Socket).
+  try {
+    const out = execFileSync('lscpu', []).toString();
+    const cores = parseInt((/Core\(s\) per socket:?\s+(\d+)/.exec(out) || [])[1], 10);
+    const sockets = parseInt((/Socket\(s\):?\s+(\d+)/.exec(out) || [])[1], 10) || 1;
+    if (cores > 0) return Math.max(2, cores * sockets);
+  } catch (e) {}
+  try { return Math.max(2, os.cpus().length); } catch (e) {}
   return 4;
 }
 const WORKERS = parseInt(flag('workers', String(defaultWorkers())), 10);
@@ -35,7 +43,7 @@ if (!Number.isFinite(parseInt(Q, 10)) || !Number.isFinite(FPS)) {
   console.error('Tham số không hợp lệ: --q và --fps cần là SỐ. VD: node render-fast.mjs both --q 1080 --fps 60');
   process.exit(1);
 }
-const HW = argv.includes('--hw');                    // encode khúc bằng Media Engine M-series
+const HW = argv.includes('--hw');                    // encode khúc bằng GPU của máy đang chạy (VideoToolbox/VAAPI/NVENC — capture.mjs tự chọn)
 const VB = flag('vb', null);
 const AUDIO = resolve(flag('audio', resolve(PROJECT, 'assets/audio/clip.mp3')));
 const aspects = aspectArg === 'both' ? ['16:9', '9:16'] : [aspectArg];

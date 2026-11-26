@@ -18,13 +18,25 @@ import puppeteer from 'puppeteer-core';
 import http from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, createReadStream, statSync } from 'node:fs';
+import { mkdirSync, createReadStream, statSync, existsSync } from 'node:fs';
 import { dirname, resolve, join, normalize, extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PROJECT = resolve(__dirname, '..');
-const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+// Chrome/Chromium tự dò theo nền tảng (override: CHROME_PATH=<đường dẫn>).
+function findChrome() {
+  if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
+  const cands = {
+    darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium'],
+    linux:  ['/usr/bin/google-chrome-stable', '/usr/bin/google-chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/snap/bin/chromium'],
+    win32:  ['C:/Program Files/Google/Chrome/Application/chrome.exe', 'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe'],
+  }[process.platform] || [];
+  for (const c of cands) if (existsSync(c)) return c;
+  try { const p = execFileSync('which', ['google-chrome']).toString().trim(); if (p) return p; } catch (e) {}
+  console.error('Không tìm thấy Chrome/Chromium. Đặt CHROME_PATH=<đường dẫn binary>.');
+  process.exit(1);
+}
 let URL_BASE = '';
 
 // ---------- args ----------
@@ -46,17 +58,41 @@ const FROMFRAME = has('fromframe') ? parseInt(flag('fromframe'), 10) : null;
 const TOFRAME = has('toframe') ? parseInt(flag('toframe'), 10) : null;
 const WARM = parseFloat(flag('warm', '3')) || 0;
 const SEGOUT = flag('segout', null);
-const HW = has('hw');                                  // encode bằng Media Engine của Apple Silicon (h264_videotoolbox)
-const VBITRATE = flag('vb', Q >= 1080 ? '16M' : '8M'); // VideoToolbox không có CRF -> dùng bitrate mục tiêu
+const HW = has('hw');                                  // encode bằng GPU của máy đang chạy (macOS: VideoToolbox · Linux/Intel-AMD: VAAPI · NVIDIA: NVENC)
+const VBITRATE = flag('vb', Q >= 1080 ? '16M' : '8M'); // encoder GPU dùng bitrate mục tiêu (không có CRF)
+
+// Chọn encoder HW theo thiết bị. Override: HW_ENCODER=vaapi|videotoolbox|nvenc|x264 · VAAPI_DEVICE=/dev/dri/renderD128
+function detectEncoder() {
+  const forced = (process.env.HW_ENCODER || '').toLowerCase();
+  if (forced === 'vaapi') return { kind: 'vaapi', device: process.env.VAAPI_DEVICE || '/dev/dri/renderD128' };
+  if (forced === 'videotoolbox') return { kind: 'videotoolbox' };
+  if (forced === 'nvenc') return { kind: 'nvenc' };
+  if (forced === 'x264' || forced === 'libx264') return { kind: 'libx264' };
+  if (process.platform === 'darwin') return { kind: 'videotoolbox' };
+  if (process.platform === 'linux') {
+    const dev = process.env.VAAPI_DEVICE || '/dev/dri/renderD128';
+    if (existsSync(dev)) return { kind: 'vaapi', device: dev };
+  }
+  return { kind: 'libx264' };
+}
+const ENCODER = detectEncoder();
 
 const even = (n) => { n = Math.round(n); return n % 2 ? n + 1 : n; };
+// Chọn video nền: ưu tiên bản all-intra (seek đúng từng frame), fallback bản web nhẹ có sẵn trên máy.
+function pickBgVideo(vertical) {
+  const cands = vertical
+    ? ['assets/video/bg-allkey-9x16.mp4', 'assets/video/bg-web.mp4', 'assets/video/bg-web-desktop.mp4']
+    : ['assets/video/bg-allkey-16x9.mp4', 'assets/video/bg-web-desktop.mp4', 'assets/video/bg-web.mp4'];
+  for (const c of cands) if (existsSync(resolve(PROJECT, c))) return c;
+  return cands[cands.length - 1];
+}
 function cfgFor(aspect) {
   const vertical = aspect === '9:16';
   const W = vertical ? even(Q) : even((Q * 16) / 9);
   const H = vertical ? even((Q * 16) / 9) : even(Q);
   return {
     aspect, vertical, W, H,
-    videoSrc: vertical ? 'assets/video/bg-allkey-9x16.mp4' : 'assets/video/bg-allkey-16x9.mp4',
+    videoSrc: pickBgVideo(vertical),
     out: resolve(__dirname, 'out', `remain_${vertical ? '9x16' : '16x9'}_${Q}p${FPS}.mp4`),
   };
 }
@@ -66,10 +102,18 @@ function audioDuration() {
 
 // ffmpeg: full (ghép nhạc) hoặc segment (video-only).
 function buildFfmpeg(outPath, segment) {
-  const a = ['-y', '-f', 'image2pipe', '-framerate', String(FPS), '-i', '-'];   // -framerate là input-opt -> TRƯỚC -i
+  const a = ['-y'];
+  if (HW && ENCODER.kind === 'vaapi') a.push('-vaapi_device', ENCODER.device);   // input-opt -> TRƯỚC -i
+  a.push('-f', 'image2pipe', '-framerate', String(FPS), '-i', '-');              // -framerate là input-opt -> TRƯỚC -i
   if (!segment) a.push('-i', AUDIO);
-  if (HW) a.push('-c:v', 'h264_videotoolbox', '-b:v', VBITRATE, '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', String(FPS));
-  else a.push('-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', String(FPS));
+  if (HW && ENCODER.kind === 'vaapi')
+    a.push('-vf', 'format=nv12,hwupload', '-c:v', 'h264_vaapi', '-b:v', VBITRATE, '-r', String(FPS));
+  else if (HW && ENCODER.kind === 'videotoolbox')
+    a.push('-c:v', 'h264_videotoolbox', '-b:v', VBITRATE, '-profile:v', 'high', '-pix_fmt', 'yuv420p', '-r', String(FPS));
+  else if (HW && ENCODER.kind === 'nvenc')
+    a.push('-c:v', 'h264_nvenc', '-preset', 'p5', '-b:v', VBITRATE, '-pix_fmt', 'yuv420p', '-r', String(FPS));
+  else
+    a.push('-c:v', 'libx264', '-preset', 'medium', '-crf', '18', '-pix_fmt', 'yuv420p', '-r', String(FPS));
   if (segment) a.push('-an');
   else a.push('-map', '0:v:0', '-map', '1:a:0', '-movflags', '+faststart', '-c:a', 'aac', '-b:a', '192k', '-ar', '48000', '-shortest');
   a.push(outPath);
@@ -173,14 +217,17 @@ async function renderAspect(browser, cfg, total) {
   const server = await startServer(PROJECT);
   URL_BASE = `http://127.0.0.1:${server.address().port}/`;
   console.log(`serving (Range) ${URL_BASE}  audio=${AUDIO}  total=${total}f`);
+  console.log(`chrome=${findChrome()}  encode=${HW ? ENCODER.kind + (ENCODER.device ? `(${ENCODER.device})` : '') : 'libx264 (CPU)'}  bg=${cfgFor(aspects[0]).videoSrc}`);
 
+  const chromeArgs = [
+    '--autoplay-policy=no-user-gesture-required', '--force-color-profile=srgb', '--hide-scrollbars',
+    '--font-render-hinting=none', '--disable-lcd-text', '--disable-font-subpixel-positioning', '--mute-audio',
+    '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--no-first-run',
+  ];
+  if (process.platform === 'linux') chromeArgs.push('--disable-dev-shm-usage');   // /dev/shm nhỏ (RAM 7.5GB)
   const browser = await puppeteer.launch({
-    executablePath: CHROME, headless: true, protocolTimeout: 1_200_000, defaultViewport: null,
-    args: [
-      '--autoplay-policy=no-user-gesture-required', '--force-color-profile=srgb', '--hide-scrollbars',
-      '--font-render-hinting=none', '--disable-lcd-text', '--disable-font-subpixel-positioning', '--mute-audio',
-      '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--no-first-run',
-    ],
+    executablePath: findChrome(), headless: true, protocolTimeout: 1_200_000, defaultViewport: null,
+    args: chromeArgs,
   });
   try {
     for (const a of aspects) await renderAspect(browser, cfgFor(a), total);   // tuần tự trong 1 tiến trình
