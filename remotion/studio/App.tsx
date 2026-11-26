@@ -1,4 +1,4 @@
-import {useEffect,useEffectEvent,useMemo,useRef,useState,type FormEvent,type MouseEvent as ReactMouseEvent} from 'react';
+import {useEffect,useEffectEvent,useLayoutEffect,useMemo,useReducer,useRef,useState,type FormEvent,type MouseEvent as ReactMouseEvent} from 'react';
 import {Player,type PlayerRef} from '@remotion/player';
 import {Scene} from './Scene';
 import {activeAt,clipCues,DEMO_SECONDS,FPS,importLyrics,MAX_AUDIO_BYTES,MAX_SECONDS,MAX_VIDEO_BYTES,rangeFromSeconds,setCueStart,setWordStart,timelineLength,validateProject,type RenderRange} from './project.mjs';
@@ -6,8 +6,10 @@ import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {Textarea} from '@/components/ui/textarea';
 import {LyricSyncPanel} from '@/components/LyricSyncPanel';
+import {canRedo,canUndo,clampView,contentWidth,createEditor,createView,cuesToLrc,editorReducer,fitPxPerSec,MAX_PROJECT_FILE_BYTES,parseProjectFile,serializeProject,timeToX,xToTime,zoomView,type View} from './editor.mjs';
 
 const sample='[00:00.00]Một nhịp thở\n[00:05.00]Rồi chữ bắt đầu chuyển động\n[00:12.00]Mỗi từ theo một nhịp\n[00:22.00]Đến lượt bạn kể chuyện';
+const demoCues=importLyrics(sample,DEMO_SECONDS);
 const seconds=(n:number)=>n.toFixed(2)+'s';
 const errText=(e:unknown)=>e instanceof Error?e.message:String(e);
 type MediaKind='audio'|'video';
@@ -22,7 +24,8 @@ export default function Studio() {
   const [video,setVideo]=useState<LocalMedia|null>(null);
   const [wide,setWide]=useState(false);
   const [draft,setDraft]=useState(sample);
-  const [cues,setCues]=useState(()=>importLyrics(sample,DEMO_SECONDS));
+  const [editor,edit]=useReducer(editorReducer,demoCues,createEditor);
+  const cues=editor.cues;
   const [selection,select]=useState<[number,number]|null>([0,0]);
   const [following,setFollowing]=useState(true);
   const [frame,setFrame]=useState(0);
@@ -33,6 +36,10 @@ export default function Studio() {
   const [renderMode,setRenderMode]=useState<'all'|'range'>('all');
   const [rangeStart,setRangeStart]=useState('0');
   const [rangeEnd,setRangeEnd]=useState<string|null>(null);
+  const [view,setView]=useState<View>(()=>createView(DEMO_SECONDS,0));
+  const timelineSection=useRef<HTMLElement>(null);
+  const videoTrack=useRef<HTMLDivElement>(null);
+  const lyricTrack=useRef<HTMLDivElement>(null);
   const length=timelineLength(audio?.seconds ?? null,video?.seconds ?? null);
   const videoLength=video ? timelineLength(null,video.seconds) : undefined;
   const duration=length/FPS;
@@ -51,6 +58,29 @@ export default function Studio() {
   const line=following?Math.max(0,liveLine):selection?.[0] ?? Math.max(0,cues.length-1);
   const cue=cues[line];
   const canTap=following?Boolean(cue?.words.some(w=>!w.confirmed)):Boolean(selection && cue);
+
+  // One view object owns the timeline scale, so the Video and Lời tracks scroll
+  // as a single timeline: whichever one scrolls publishes scrollX, and the
+  // others follow. The browser clamps scrollLeft; the helpers clamp the scale.
+  const trackWidth=()=>lyricTrack.current?.clientWidth ?? 0;
+  const fitTimeline=useEffectEvent(()=>{
+    const viewportWidth=trackWidth();
+    setView(current=>clampView({pxPerSec:fitPxPerSec(duration,viewportWidth),scrollX:current.scrollX},{duration,viewportWidth}));
+  });
+  const zoomTimeline=useEffectEvent((factor:number,anchorTime?:number)=>{
+    const viewportWidth=trackWidth();
+    setView(current=>zoomView(current,{factor,duration,viewportWidth,anchorTime:anchorTime ?? time}));
+  });
+  const scrollTimeline=useEffectEvent((scrollX:number)=>setView(current=>current.scrollX===scrollX?current:{...current,scrollX}));
+  useLayoutEffect(()=>{fitTimeline();},[duration]);
+  useEffect(()=>{
+    for (const track of [videoTrack.current,lyricTrack.current]) if (track && track.scrollLeft!==view.scrollX) track.scrollLeft=view.scrollX;
+  },[view.scrollX]);
+  useEffect(()=>{
+    // Undoing an edit that removed lines must not leave the panel pointing past
+    // the end of the lyrics.
+    if (selection && selection[0]>=cues.length) select(cues.length?[cues.length-1,0]:null);
+  },[cues,selection]);
 
 
   useEffect(()=>{
@@ -76,7 +106,7 @@ export default function Studio() {
     setFrame(clamped);
   }
   function changeLyrics(text:string) {
-    try {setCues(text.trim()?importLyrics(text,duration,MAX_SECONDS):[]);select([0,0]);setFollowing(true);setError('');setNotice('Đã cập nhật lời.');}
+    try {edit({type:'commit',cues:text.trim()?importLyrics(text,duration,MAX_SECONDS):[]});select([0,0]);setFollowing(true);setError('');setNotice('Đã cập nhật lời.');}
     catch(e){setError(errText(e));}
   }
   function applyLyrics(e:FormEvent) {e.preventDefault();changeLyrics(draft);}
@@ -158,7 +188,7 @@ export default function Studio() {
   function editLineStart(value:number) {
     if (!cue) return false;
     try {
-      setCues(setCueStart(cues,line,value,value>=duration || cue.start>=duration ? MAX_SECONDS : duration));
+      edit({type:'commit',cues:setCueStart(cues,line,value,value>=duration || cue.start>=duration ? MAX_SECONDS : duration)});
       setError('');seek(value*FPS);
       return true;
     } catch(err){setError(errText(err));return false;}
@@ -174,12 +204,38 @@ export default function Studio() {
     if (!target) return;
     const [i,j]=target;
     try {
-      setCues(setWordStart(cues,i,j,now,duration));
+      edit({type:'commit',cues:setWordStart(cues,i,j,now,duration)});
       setFollowing(false);
       if(j+1<cues[i].words.length)select([i,j+1]);
       else if(i+1<cues.length)select([i+1,0]);
       else select(null);
       setError('');
+    } catch(e){setError(errText(e));}
+  }
+  function undo(){if(canUndo(editor))edit({type:'undo'});}
+  function redo(){if(canRedo(editor))edit({type:'redo'});}
+  function saveProject() {
+    setError('');setNotice('');
+    try {
+      const json=serializeProject({project,renderRange,media:{audio:audio?.file.name ?? null,video:video?.file.name ?? null}});
+      const url=URL.createObjectURL(new Blob([json],{type:'application/json'}));
+      const a=document.createElement('a');a.href=url;a.download='remain-studio-project.json';a.click();
+      window.setTimeout(()=>URL.revokeObjectURL(url),60000);
+      setNotice('Đã lưu project (.json). Khi mở lại, hãy chọn lại nhạc và video từ máy.');
+    } catch(e){setError(errText(e));}
+  }
+  async function loadProject(file:File) {
+    try {
+      if(file.size>MAX_PROJECT_FILE_BYTES) throw Error('File project tối đa 1 MiB.');
+      const loaded=parseProjectFile(await file.text());
+      edit({type:'reset',cues:loaded.cues});
+      setDraft(cuesToLrc(loaded.cues));
+      setWide(loaded.width===1280);
+      if(loaded.renderRange){setRenderMode('range');setRangeStart(String(loaded.renderRange.startFrame/FPS));setRangeEnd(String(loaded.renderRange.endFrame/FPS));}
+      else {setRenderMode('all');setRangeStart('0');setRangeEnd(null);}
+      resetPlayhead();setFollowing(true);
+      setError('');
+      setNotice(`Đã nạp ${file.name}. ${loaded.media.audio||loaded.media.video?'Hãy chọn lại nhạc và video từ máy.':''}`);
     } catch(e){setError(errText(e));}
   }
   async function exportClip() {
@@ -211,11 +267,42 @@ export default function Studio() {
     e.preventDefault();
     tap();
   });
+  const editorFromKeyboard = useEffectEvent((e: KeyboardEvent) => {
+    if (e.defaultPrevented || e.isComposing || e.repeat) return;
+    const key = e.key.toLowerCase();
+    const modifier = e.ctrlKey || e.metaKey;
+    // Ctrl+Z typed in the lyrics field stays a text undo, not a cue undo.
+    const typing = e.target instanceof HTMLElement && (e.target.isContentEditable || e.target.closest('input:not([type=range]), textarea, select'));
+    if (modifier && (key === 'z' || key === 'y')) {
+      if (typing) return;
+      if (key === 'y' && !e.shiftKey || key === 'z' && e.shiftKey) { if (canRedo(editor)) { e.preventDefault(); edit({type:'redo'}); } }
+      else if (key === 'z' && canUndo(editor)) { e.preventDefault(); edit({type:'undo'}); }
+      return;
+    }
+    if (modifier || e.altKey || typing) return;
+    if (key === '+' || key === '=') { e.preventDefault(); zoomTimeline(1.4); }
+    else if (key === '-') { e.preventDefault(); zoomTimeline(1 / 1.4); }
+    else if (key === 'f') { e.preventDefault(); fitTimeline(); }
+  });
+  const zoomFromWheel = useEffectEvent((e: WheelEvent) => {
+    if (!e.ctrlKey && !e.metaKey) return;
+    e.preventDefault();
+    const rect = lyricTrack.current?.getBoundingClientRect();
+    zoomTimeline(e.deltaY < 0 ? 1.2 : 1 / 1.2, rect ? xToTime(view.scrollX + (e.clientX - rect.left), view) : time);
+  });
   useEffect(() => {
     // The focused word button may disappear when the next line is shorter.
-    const onKeyDown = (e: KeyboardEvent) => tapFromKeyboard(e);
+    const onKeyDown = (e: KeyboardEvent) => { tapFromKeyboard(e); editorFromKeyboard(e); };
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
+  }, []);
+  useEffect(() => {
+    const el = timelineSection.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => zoomFromWheel(e);
+    // Ctrl/⌘ + wheel zooms the timeline around the cursor instead of the page.
+    el.addEventListener('wheel', onWheel, {passive: false});
+    return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
   return <div className="studio">
@@ -247,14 +334,24 @@ export default function Studio() {
         <section className="panel"><div className="section-bar"><h2>02 · Lời</h2><label className="filebutton">Nhập .LRC<input type="file" accept=".lrc,text/plain" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void chooseLrc(file);}}/></label></div>
           <form onSubmit={applyLyrics}><label htmlFor="lyrics">Dán lời, mỗi câu một dòng, hoặc dán LRC</label><Textarea id="lyrics" className="field-sizing-fixed" rows={5} maxLength={16000} value={draft} onChange={e=>setDraft(e.target.value)}/><Button type="submit" variant="outline">Áp dụng lời</Button></form>
         </section>
+        <section className="panel"><div className="section-bar"><h2>04 · Project</h2><span className="subtle">JSON · 1 MiB</span></div>
+          <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" onClick={saveProject}>Lưu project</Button><label className="filebutton">Nạp project<input id="project-file" type="file" accept=".json,application/json" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void loadProject(file);}}/></label></div>
+          <p className="hint">File lưu lời, các mốc từ, khổ khung và phạm vi xuất. Nhạc cùng video không nằm trong file: hãy chọn lại đúng hai tệp đó khi mở project.</p>
+        </section>
       </aside>
     </main>
-    <section className="timeline" aria-label="Timeline">
-      <div className="section-bar"><h2>Timeline</h2><span className="subtle">{seconds(time)} / {seconds(duration)} · {FPS} fps</span></div>
+    <section className="timeline" ref={timelineSection} aria-label="Timeline">
+      <div className="section-bar"><h2>Timeline</h2><div className="flex flex-wrap items-center gap-1.5">
+        <Button type="button" variant="outline" size="sm" disabled={!canUndo(editor)} onClick={undo} title="Hoàn tác (Ctrl+Z)">Hoàn tác</Button>
+        <Button type="button" variant="outline" size="sm" disabled={!canRedo(editor)} onClick={redo} title="Làm lại (Ctrl+Shift+Z)">Làm lại</Button>
+        <Button type="button" variant="outline" size="sm" onClick={()=>zoomTimeline(1/1.4)} aria-label="Thu nhỏ timeline" title="Thu nhỏ (-)">−</Button>
+        <Button type="button" variant="outline" size="sm" onClick={()=>zoomTimeline(1.4)} aria-label="Phóng to timeline" title="Phóng to (+)">+</Button>
+        <Button type="button" variant="outline" size="sm" onClick={()=>fitTimeline()} title="Vừa khung (F)">Vừa khung</Button>
+        <span className="subtle">{seconds(time)} / {seconds(duration)} · {FPS} fps</span></div></div>
       <div className="lane"><span>Playhead</span><input id="timeline" aria-label="Vị trí timeline" type="range" min={0} max={length-1} step={1} value={frame} onChange={e=>seek(Number(e.target.value))}/></div>
-      <div className="lane"><span>Video</span><div className="track video-track">{video && <span style={{width:`${100*(videoLength ?? 0)/length}%`}}>{video.file.name}</span>}</div></div>
+      <div className="lane"><span>Video</span><div ref={videoTrack} className="track video-track scrollable" onScroll={e=>scrollTimeline(e.currentTarget.scrollLeft)}><div className="track-strip" style={{width:`${contentWidth(duration,view)}px`}}>{video && <span style={{width:`${timeToX((videoLength ?? 0)/FPS,view)}px`}}>{video.file.name}</span>}</div></div></div>
       <div className="lane"><span>Nhạc</span><div className={'audio-lane '+(audio?'loaded':'')}>{audio?audio.file.name:'Chưa có nhạc'}</div></div>
-      <div className="lane"><span>Lời</span><div className="track">{visibleCues.map((c,i)=><button key={i} className={i===liveLine?'live':''} title={`${c.text} · ${seconds(c.start)}`} aria-label={`Tua đến dòng ${i+1}: ${c.text}`} onClick={()=>{select([i,0]);seek(Math.ceil(c.start*FPS));}} style={{left:`${100*c.start/duration}%`,width:`${100*((visibleCues[i+1]?.start??duration)-c.start)/duration}%`}}>{c.text}</button>)}</div></div>
+      <div className="lane"><span>Lời</span><div ref={lyricTrack} className="track scrollable" onScroll={e=>scrollTimeline(e.currentTarget.scrollLeft)}><div className="track-strip" style={{width:`${contentWidth(duration,view)}px`}}>{visibleCues.map((c,i)=><button key={i} className={i===liveLine?'live':''} title={`${c.text} · ${seconds(c.start)}`} aria-label={`Tua đến dòng ${i+1}: ${c.text}`} onClick={()=>{select([i,0]);seek(Math.ceil(c.start*FPS));}} style={{left:`${timeToX(c.start,view)}px`,width:`${Math.max(28,timeToX((visibleCues[i+1]?.start??duration)-c.start,view))}px`}}>{c.text}</button>)}</div></div></div>
     </section>
     <section className="export-options" aria-label="Thiết lập xuất video">
       <div className="section-bar"><h2>Thiết lập xuất</h2><output id="render-duration">{rangeError?'—':seconds((renderRange?renderRange.endFrame-renderRange.startFrame:length)/FPS)}</output></div>

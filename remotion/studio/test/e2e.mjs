@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,rm} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {execFileSync,spawnSync} from 'node:child_process';
@@ -101,6 +101,52 @@ try {
   await seek(27);
   await page.keyboard.press('t');
   assert.equal(await lastWord.innerText(),finalStamp);
+
+  // Cue history: Ctrl+Z / Ctrl+Shift+Z walk the word stamps.
+  const undoButton = page.getByRole('button', {name: 'Hoàn tác', exact: true});
+  const redoButton = page.getByRole('button', {name: 'Làm lại', exact: true});
+  assert.equal(await undoButton.isEnabled(), true, 'A tapped word must be undoable');
+  assert.equal(await redoButton.isEnabled(), false, 'Nothing has been undone yet');
+  const stampedWord = tapPanel.getByRole('button', {name: /^lại /});
+  const stampedText = await stampedWord.innerText();
+  await lyrics.focus();
+  await page.keyboard.press('Control+z');
+  assert.equal(await stampedWord.innerText(), stampedText, 'Ctrl+Z typed in the lyrics field stays a text undo');
+  await page.getByRole('button', {name: 'Vừa khung'}).focus();
+  await page.keyboard.press('Control+z');
+  assert.notEqual(await stampedWord.innerText(), stampedText, 'Ctrl+Z must roll the last word stamp back');
+  assert.equal(await redoButton.isEnabled(), true);
+  await page.keyboard.press('Control+Shift+z');
+  assert.equal(await stampedWord.innerText(), stampedText, 'Ctrl+Shift+Z must bring the stamp back');
+
+  // Timeline zoom: the cue blocks are placed by time * pxPerSec, so the scale
+  // has to show up in their measured width, and Fit must find the original.
+  const cueBlock = page.locator('.track button').first();
+  const fitted = (await cueBlock.boundingBox()).width;
+  await page.getByRole('button', {name: 'Phóng to timeline'}).click();
+  assert.ok((await cueBlock.boundingBox()).width > fitted * 1.3, 'Zooming in must widen the cue blocks');
+  await page.getByRole('button', {name: 'Thu nhỏ timeline'}).click();
+  assert.ok(Math.abs((await cueBlock.boundingBox()).width - fitted) <= 1, 'Zooming back out must restore the scale');
+  await page.getByRole('button', {name: 'Vừa khung'}).click();
+  assert.ok(Math.abs((await cueBlock.boundingBox()).width - fitted) <= 1, 'Fit must restore the timeline scale');
+
+  // Project file: save the editing session, wipe it, load it back.
+  const savedPath = join(dir, 'project.json');
+  const projectDownload = page.waitForEvent('download', {timeout: 15000});
+  await page.getByRole('button', {name: 'Lưu project', exact: true}).click();
+  await (await projectDownload).saveAs(savedPath);
+  const saved = JSON.parse(await readFile(savedPath, 'utf8'));
+  assert.deepEqual([saved.version, saved.cues.length, saved.width, saved.height], [1, 3, 720, 1280]);
+  assert.ok(saved.cues[0].words.some(w => w.confirmed), 'A saved project must keep the locked word marks');
+  await lyrics.fill('[00:00.00]Một dòng mới');
+  await page.getByRole('button', {name: 'Áp dụng lời'}).click();
+  assert.equal(await page.locator('.track button').count(), 1);
+  await page.locator('#project-file').setInputFiles(savedPath);
+  await page.getByText('Đã nạp project.json').waitFor({timeout: 5000});
+  assert.equal(await page.locator('.track button').count(), 3);
+  await page.getByRole('button', {name: 'hai 0.70s'}).waitFor({timeout: 3000});
+  assert.match(await lyrics.inputValue(), /^\[00:00\.00\]/, 'A loaded project must refill the lyrics editor');
+
   if (process.env.STUDIO_SCREENSHOT) await page.screenshot({path:process.env.STUDIO_SCREENSHOT});
   if (!process.env.STUDIO_PREVIEW_ONLY) {
     const download = page.waitForEvent('download',{timeout:240_000});
