@@ -7,7 +7,9 @@
 import {validateProject} from './project.mjs';
 
 export const HISTORY_LIMIT = 100;
-export const MIN_PX_PER_SEC = 20;
+// 10 px/s is the floor that still lets "Vừa khung" fit a 30s clip inside a
+// phone-width lane; cue blocks keep a 28px minimum width so they stay tappable.
+export const MIN_PX_PER_SEC = 10;
 export const MAX_PX_PER_SEC = 400;
 export const PROJECT_FILE_VERSION = 1;
 export const MAX_PROJECT_FILE_BYTES = 1_048_576;
