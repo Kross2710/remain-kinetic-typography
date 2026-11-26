@@ -15,7 +15,8 @@ const errText=(e:unknown)=>e instanceof Error?e.message:String(e);
 type MediaKind='audio'|'video';
 type LocalMedia={file:File;src:string;seconds:number};
 type RenderJob={phase:string;progress:number;renderedFrames:number|null;totalFrames:number|null;etaSeconds:number|null};
-const PHASE_LABEL:Record<string,string>={upload:'Đang tải project lên máy chủ',prepare:'Đang chuẩn bị nhạc và video',bundle:'Đang đóng gói bundle',render:'Đang render khung hình',encoding:'Đang render và mã hoá khung hình',muxing:'Đang ghép âm thanh',done:'Hoàn tất'};
+type RenderJobResponse={id:string;status:string;phase:string;progress:number;renderedFrames:number|null;totalFrames:number|null;etaMs:number|null;error?:string};
+const PHASE_LABEL:Record<string,string>={upload:'Đang tải project lên máy chủ',prepare:'Đang chuẩn bị nhạc và video',bundle:'Đang đóng gói bundle',render:'Đang render khung hình',encoding:'Đang render và mã hoá khung hình',muxing:'Đang ghép âm thanh',done:'Hoàn tất',cancelled:'Đã huỷ render',failed:'Render thất bại'};
 const etaText=(seconds:number)=>seconds<60?`còn ~${seconds} giây`:`còn ~${Math.floor(seconds/60)} phút ${seconds%60} giây`;
 const renderStatus=(job:RenderJob)=>[PHASE_LABEL[job.phase] ?? 'Đang render…',`${Math.round(job.progress*100)}%`,job.totalFrames?`${job.renderedFrames}/${job.totalFrames} khung`:null,job.etaSeconds!==null?etaText(job.etaSeconds):null].filter(Boolean).join(' · ');
 
@@ -36,6 +37,7 @@ export default function Studio() {
   const [playing,setPlaying]=useState(false);
   const [busy,setBusy]=useState(false);
   const [renderJob,setRenderJob]=useState<RenderJob|null>(null);
+  const activeJobId=useRef<string|null>(null);
   const [notice,setNotice]=useState('');
   const [error,setError]=useState('');
   const [renderMode,setRenderMode]=useState<'all'|'range'>('all');
@@ -243,36 +245,57 @@ export default function Studio() {
       setNotice(`Đã nạp ${file.name}. ${loaded.media.audio||loaded.media.video?'Hãy chọn lại nhạc và video từ máy.':''}`);
     } catch(e){setError(errText(e));}
   }
-  const pollRenderJob=useEffectEvent(async()=>{
-    try {
-      const response=await fetch('/api/render/progress',{cache:'no-store'});
-      if(!response.ok)return;
-      const job=await response.json();
-      if(!job?.active)return;
-      setRenderJob({phase:job.phase,progress:job.progress,renderedFrames:job.renderedFrames??null,
-        totalFrames:job.totalFrames??null,etaSeconds:Number.isFinite(job.etaMs)?Math.max(0,Math.round(job.etaMs/1000)):null});
-    } catch {
-      // A dropped poll is retried on the next tick; the render POST stays the source of truth.
-    }
+  const showRenderJob=useEffectEvent((job:RenderJobResponse)=>{
+    setRenderJob({phase:job.phase,progress:job.progress,renderedFrames:job.renderedFrames??null,
+      totalFrames:job.totalFrames??null,etaSeconds:job.etaMs!==null&&Number.isFinite(job.etaMs)?Math.max(0,Math.round(job.etaMs/1000)):null});
   });
+  // A render is a server-side job: POST only hands back an id, the client then
+  // watches that id until it settles and downloads the video from the job.
+  const watchRenderJob=useEffectEvent((id:string)=>new Promise<RenderJobResponse>((resolve,reject)=>{
+    const tick=async()=>{
+      try {
+        const response=await fetch(`/api/render/jobs/${id}`,{cache:'no-store'});
+        if(response.status===404){stop();reject(Error('Render đã mất vì Studio khởi động lại. Hãy xuất lại.'));return;}
+        if(!response.ok)return;
+        const job:RenderJobResponse=await response.json();
+        showRenderJob(job);
+        if(job.status!=='running'){stop();resolve(job);}
+      } catch {
+        // A dropped poll is retried on the next tick; the job keeps running either way.
+      }
+    };
+    const interval=window.setInterval(tick,700);
+    const stop=()=>window.clearInterval(interval);
+    void tick();
+  }));
+  function cancelRender() {
+    const id=activeJobId.current;
+    if(!id)return;
+    void fetch(`/api/render/jobs/${id}/cancel`,{method:'POST'})
+      .then(response=>{if(!response.ok)setError('Không huỷ được render.');})
+      .catch(()=>setError('Không huỷ được render.'));
+  }
   async function exportClip() {
     setError('');setNotice('');setBusy(true);
     setRenderJob({phase:'upload',progress:0,renderedFrames:null,totalFrames:null,etaSeconds:null});
-    // The render POST only answers with the MP4 at the end, so progress is read
-    // from a side channel while that request stays open.
-    const poll=window.setInterval(()=>void pollRenderJob(),700);
     try {
       const data=new FormData();data.set('project',JSON.stringify(validateProject({...project,renderRange})));
       if(audio)data.set('audio',audio.file);
       if(video)data.set('video',video.file);
-      const response=await fetch('/api/render',{method:'POST',body:data});
-      if(!response.ok){const body=await response.json().catch(()=>({}));throw Error(body.error || `Không xuất được video (HTTP ${response.status}).`);}
-      if(!response.headers.get('content-type')?.startsWith('video/mp4'))throw Error('Máy chủ không trả về MP4.');
-      const url=URL.createObjectURL(await response.blob());
+      const started=await fetch('/api/render',{method:'POST',body:data});
+      if(!started.ok){const body=await started.json().catch(()=>({}));throw Error(body.error || `Không gửi được project (HTTP ${started.status}).`);}
+      const {jobId}=await started.json();
+      activeJobId.current=jobId;
+      const finished=await watchRenderJob(jobId);
+      if(finished.status==='cancelled'){setNotice('Đã huỷ render.');return;}
+      if(finished.status!=='done')throw Error(finished.error || 'Không xuất được video.');
+      const file=await fetch(`/api/render/jobs/${jobId}/file`);
+      if(!file.ok)throw Error('Không tải được video đã render.');
+      const url=URL.createObjectURL(await file.blob());
       const a=document.createElement('a');a.href=url;a.download=renderRange?'remain-studio-segment.mp4':'remain-studio.mp4';a.click();
       window.setTimeout(()=>URL.revokeObjectURL(url),60000);setNotice('Đã xuất MP4.');
     } catch(e){setError(errText(e));}
-    finally {window.clearInterval(poll);setRenderJob(null);setBusy(false);}
+    finally {activeJobId.current=null;setRenderJob(null);setBusy(false);}
   }
 
   const tapFromKeyboard = useEffectEvent((e: KeyboardEvent) => {
@@ -330,7 +353,7 @@ export default function Studio() {
     <header className="topbar">
       <div className="identity"><span className="mark" aria-hidden="true">R</span><div><h1>Remain Studio</h1><span>VIDEO CHỮ CHUYỂN ĐỘNG</span></div></div>
       <div className="toolbar"><label>Khung hình<select value={wide?'wide':'tall'} onChange={e=>setWide(e.target.value==='wide')}><option value="tall">9:16 · Dọc</option><option value="wide">16:9 · Ngang</option></select></label>
-      <Button type="button" className="px-3 font-semibold min-[781px]:px-4" disabled={busy || Boolean(rangeError) || (!visibleCues.length && !audio && !video)} onClick={exportClip}>{busy?(renderJob?`Đang render… ${Math.round(renderJob.progress*100)}%`:'Đang render…'):'Xuất MP4'}</Button></div>
+      <Button type="button" className="px-3 font-semibold min-[781px]:px-4" disabled={busy || Boolean(rangeError) || (!visibleCues.length && !audio && !video)} onClick={exportClip}>{busy?(renderJob?`Đang render… ${Math.round(renderJob.progress*100)}%`:'Đang render…'):'Xuất MP4'}</Button>{busy && <Button type="button" variant="outline" className="px-3 min-h-[44px] min-[781px]:px-4" onClick={cancelRender}>Huỷ render</Button>}</div>
     </header>
     <main className="workspace mt-3 grid grid-cols-1 gap-3 min-[781px]:grid-cols-[minmax(0,1fr)_minmax(296px,354px)]">
       <section className="viewer" aria-label="Preview">
@@ -386,6 +409,6 @@ export default function Studio() {
       </div>
       {rangeError && <p className="error" role="status">{rangeError}</p>}
     </section>
-    <footer><span>Render bằng máy đang chạy Studio · MP4 / H.264</span><div role={error?'alert':'status'} className={error?'error':''}>{error || (busy?'Đang render. Giữ tab mở để tải video.':notice)}</div></footer>
+    <footer><span>Render bằng máy đang chạy Studio · MP4 / H.264</span><div role={error?'alert':'status'} className={error?'error':''}>{error || (busy?'Đang render trên máy. Render vẫn chạy nếu bạn reload trang.':notice)}</div></footer>
   </div>;
 }

@@ -22,22 +22,26 @@ let samples = [];
 try {
   const data = new FormData();
   data.set('project', JSON.stringify(project));
-  let finished = false;
-  const render = fetch(`${base}/api/render`, {method: 'POST', body: data}).then((response) => {
-    finished = true;
-    return response;
-  });
+  const startedUpload = await fetch(`${base}/api/render`, {method: 'POST', body: data});
+  if (startedUpload.status !== 202) throw Error(`Render start failed: ${await startedUpload.text()}`);
+  const {jobId} = await startedUpload.json();
   const started = Date.now();
-  while (!finished && Date.now() - started < 9 * 60_000) {
-    const job = await (await fetch(`${base}/api/render/progress`)).json();
-    if (job.active) samples.push({...job, at: Date.now() - started});
+  let job = null;
+  while (Date.now() - started < 9 * 60_000) {
+    job = await (await fetch(`${base}/api/render/jobs/${jobId}`)).json();
+    if (job.status === 'running') samples.push({...job, at: Date.now() - started});
+    else break;
     await delay(250);
   }
-  const response = await render;
-  if (response.status !== 200) throw Error(`Render failed: ${await response.text()}`);
-  assert.match(response.headers.get('content-type'), /^video\/mp4\b/);
-  const clip = new Uint8Array(await response.arrayBuffer());
+  if (job?.status !== 'done') throw Error(`Render did not finish: ${JSON.stringify(job)}`);
+  const file = await fetch(`${base}/api/render/jobs/${jobId}/file`);
+  if (file.status !== 200) throw Error(`Video download failed: ${file.status}`);
+  assert.match(file.headers.get('content-type'), /^video\/mp4\b/);
+  const clip = new Uint8Array(await file.arrayBuffer());
   await writeFile(join(scratch, 'clip.mp4'), clip);
+  const gone = await fetch(`${base}/api/render/jobs/${jobId}`);
+  if (gone.status !== 404) throw Error('A downloaded job must be removed from the server');
+  await gone.json();
 
   for (const sample of samples) {
     console.log(`t=${(sample.at / 1000).toFixed(1)}s ${sample.phase} ${Math.round(sample.progress * 100)}%`

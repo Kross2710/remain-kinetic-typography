@@ -43,6 +43,34 @@ function post(base, body = form(), headers) {
   return fetch(`${base}/api/render`, {method: 'POST', body, headers});
 }
 
+async function startJob(base, body = form(), headers) {
+  const response = await post(base, body, headers);
+  assert.equal(response.status, 202, 'POST /api/render must only accept the job');
+  return (await response.json()).jobId;
+}
+
+async function waitForStatus(base, jobId, status) {
+  for (let attempt = 0; attempt < 250; attempt++) {
+    const job = await (await fetch(`${base}/api/render/jobs/${jobId}`)).json();
+    if (job.status === status) return job;
+    if (job.status !== 'running') assert.fail(`Job settled as ${job.status}, expected ${status}`);
+    await delay(20);
+  }
+  assert.fail(`Job ${jobId} never reached status ${status}`);
+}
+
+async function downloadJob(base, jobId) {
+  const job = await waitForStatus(base, jobId, 'done');
+  const file = await fetch(`${base}/api/render/jobs/${jobId}/file`);
+  return {job, file};
+}
+
+async function exportMp4(base, body = form(), headers) {
+  const jobId = await startJob(base, body, headers);
+  const {job, file} = await downloadJob(base, jobId);
+  return {jobId, job, bytes: Buffer.from(await file.arrayBuffer())};
+}
+
 test('serves Vite source and HMR on the Studio port without bypassing the render API or LAN boundary', async (t) => {
   const base=await studio(t,{dev:true});
   const page=await fetch(`${base}/`);
@@ -54,9 +82,7 @@ test('serves Vite source and HMR on the Studio port without bypassing the render
   const source=await fetch(`${base}/server.mjs`);
   assert.equal(source.status,403);
   await source.arrayBuffer();
-  const response=await post(base,form(),{Origin:base});
-  assert.equal(response.status,200);
-  assert.deepEqual(Buffer.from(await response.arrayBuffer()),mp4);
+  assert.deepEqual((await exportMp4(base,form(),{Origin:base})).bytes,mp4);
   const status=await new Promise((resolve,reject)=>{
     const req=request(`${base}/__studio_hmr`,{headers:{Connection:'Upgrade',Upgrade:'websocket',Origin:'http://example.org','Sec-WebSocket-Protocol':'vite-hmr'}},res=>{
       res.resume();resolve(res.statusCode);
@@ -75,10 +101,12 @@ test('exports MP4 from a validated multipart project with no media', async (t) =
     assert.equal(Object.hasOwn(job, 'frameRange'), false);
     await render(job);
   }});
-  const response = await post(base, form({...project, audioSrc: 'https://example.org/audio', videoSrc: 'https://example.org/video'}), {Origin: base});
-  assert.equal(response.status, 200);
-  assert.match(response.headers.get('content-type'), /^video\/mp4\b/);
-  assert.deepEqual(Buffer.from(await response.arrayBuffer()), mp4);
+  const jobId = await startJob(base, form({...project, audioSrc: 'https://example.org/audio', videoSrc: 'https://example.org/video'}), {Origin: base});
+  const {job, file} = await downloadJob(base, jobId);
+  assert.equal(job.status, 'done');
+  assert.equal(job.progress, 1);
+  assert.match(file.headers.get('content-type'), /^video\/mp4\b/);
+  assert.deepEqual(Buffer.from(await file.arrayBuffer()), mp4);
   assert.deepEqual(props, {project, audioSrc: null, videoSrc: null});
 });
 
@@ -122,8 +150,10 @@ test('LAN opt-in binds all IPv4 interfaces but only trusts the selected local au
   assert.equal(server.address().address,'0.0.0.0');
   const base=`http://${ip}:${server.address().port}`;
   const ok=await post(base,form(),{Origin:base,'Sec-Fetch-Site':'same-origin'});
-  assert.equal(ok.status,200);
-  await ok.arrayBuffer();
+  assert.equal(ok.status,202);
+  const {file} = await downloadJob(base, (await ok.json()).jobId);
+  assert.equal(file.status,200);
+  await file.arrayBuffer();
   const blocked=await post(base,form(),{Origin:'http://example.org','Sec-Fetch-Site':'cross-site'});
   assert.equal(blocked.status,403);
   await blocked.arrayBuffer();
@@ -166,12 +196,13 @@ test('serves normalized local audio to the renderer with byte ranges, then remov
     assert.equal(Buffer.from(await media.arrayBuffer()).toString('ascii', 8), 'WAVE');
     await render(job);
   }});
-  const response = await post(base, form(project, wav()));
-  assert.equal(response.status, 200);
-  await response.arrayBuffer();
+  const jobId = await startJob(base, form(project, wav()));
+  assert.equal((await waitForStatus(base, jobId, 'done')).status, 'done');
   const expired = await fetch(source);
-  assert.equal(expired.status, 404);
+  assert.equal(expired.status, 404, 'Normalized media must not outlive the render');
   await expired.arrayBuffer();
+  const {file} = await downloadJob(base, jobId);
+  await file.arrayBuffer();
   await waitForRemoval(workspace);
 });
 
@@ -205,12 +236,13 @@ test('normalizes an uploaded video and serves it alongside an independent audio 
     assert.equal(Buffer.from(await audioResponse.arrayBuffer()).toString('ascii', 8, 12), 'WAVE');
     await render(job);
   }});
-  const response = await post(base, form(project, wav(), new Blob([stdout])));
-  assert.equal(response.status, 200);
-  await response.arrayBuffer();
+  const jobId = await startJob(base, form(project, wav(), new Blob([stdout])));
+  assert.equal((await waitForStatus(base, jobId, 'done')).status, 'done');
   const expired = await fetch(inputProps.videoSrc);
   assert.equal(expired.status, 404);
   await expired.arrayBuffer();
+  const {file} = await downloadJob(base, jobId);
+  await file.arrayBuffer();
   await waitForRemoval(workspace);
 });
 
@@ -227,9 +259,8 @@ test('accepts silent MP4, MOV and WebM uploads as video-only projects', async (t
         assert.equal(stdout.trim(), 'h264');
         await render(job);
       }});
-      const response = await post(base, form({...project, cues: []}, undefined, new Blob([stdout])));
-      assert.equal(response.status, 200);
-      await response.arrayBuffer();
+      const {bytes} = await exportMp4(base, form({...project, cues: []}, undefined, new Blob([stdout])));
+      assert.deepEqual(bytes, mp4, container);
     });
   }
 });
@@ -245,9 +276,9 @@ test('passes an inclusive Remotion range without shifting the media or shortenin
     assert.equal(Number(stdout), 32);
     await render(job);
   }});
-  const response = await post(base, form(rangeProject, wav(45)));
-  assert.equal(response.status, 200);
-  await response.arrayBuffer();
+  const jobId = await startJob(base, form(rangeProject, wav(45)));
+  const {file} = await downloadJob(base, jobId);
+  await file.arrayBuffer();
 });
 
 test('reports render progress while a render is running', async (t) => {
@@ -258,39 +289,39 @@ test('reports render progress while a render is running', async (t) => {
     await midRender.promise;
     await render(job);
   }});
-  const first = post(base);
+  const jobId = await startJob(base);
   const job = await entered.promise;
-  const started = await (await fetch(`${base}/api/render/progress`)).json();
-  assert.equal(started.active, true);
+  const started = await (await fetch(`${base}/api/render/jobs/${jobId}`)).json();
+  assert.equal(started.status, 'running');
   assert.equal(started.phase, 'upload');
   assert.equal(started.progress, 0);
   job.report({phase: 'bundle', progress: 0.5});
   job.report({phase: 'render', progress: 0.4, renderedFrames: 12, totalFrames: 30, etaMs: 6000});
-  const running = await (await fetch(`${base}/api/render/progress`)).json();
-  assert.deepEqual(running, {active: true, phase: 'render', progress: 0.55, renderedFrames: 12,
-    totalFrames: 30, etaMs: 6000, elapsedMs: running.elapsedMs});
+  const running = await (await fetch(`${base}/api/render/jobs/${jobId}`)).json();
+  assert.deepEqual(running, {id: jobId, status: 'running', phase: 'render', progress: 0.55,
+    renderedFrames: 12, totalFrames: 30, etaMs: 6000, elapsedMs: running.elapsedMs});
   assert.ok(running.elapsedMs >= 0);
   assert.equal(JSON.stringify(running).includes(job.workspace), false,
-    'Progress must not expose render workspace paths');
+    'A job view must not expose render workspace paths');
   const busy = await post(base);
   assert.equal(busy.status, 409);
   await busy.json();
   job.report({phase: 'muxing', progress: 1});
-  const finishing = await (await fetch(`${base}/api/render/progress`)).json();
+  const finishing = await (await fetch(`${base}/api/render/jobs/${jobId}`)).json();
   assert.equal(finishing.progress, 1, 'The last stage must close the bar at 100%');
   midRender.resolve();
-  const response = await first;
-  assert.equal(response.status, 200);
-  await response.arrayBuffer();
-  const idle = await (await fetch(`${base}/api/render/progress`)).json();
-  assert.deepEqual(idle, {active: false, phase: 'idle', progress: 0, renderedFrames: 0,
-    totalFrames: null, etaMs: null, elapsedMs: 0});
+  const {file} = await downloadJob(base, jobId);
+  assert.equal(file.status, 200);
+  await file.arrayBuffer();
+  const gone = await fetch(`${base}/api/render/jobs/${jobId}`);
+  assert.equal(gone.status, 404, 'A downloaded job must stop being pollable');
+  await gone.json();
 });
 
-test('progress reads stay inside the same local network boundary as renders', async (t) => {
+test('job reads stay inside the same local network boundary as renders', async (t) => {
   const base = await studio(t);
   const response = await new Promise((resolve, reject) => {
-    const req = request(`${base}/api/render/progress`, {headers: {Host: 'example.org:4317'}}, resolve);
+    const req = request(`${base}/api/render/jobs/00000000-0000-4000-8000-000000000000`, {headers: {Host: 'example.org:4317'}}, resolve);
     req.on('error', reject);
     req.end();
   });
@@ -311,14 +342,19 @@ async function waitForRemoval(workspace) {
   assert.fail('Render workspace was not removed');
 }
 
-test('rejects disguised or empty audio before rendering', async (t) => {
+test('rejects empty audio before a job is even created', async (t) => {
+  const base = await studio(t, {render: () => assert.fail('Empty audio reached the renderer')});
+  const response = await post(base, form(project, new Blob([], {type: 'audio/wav'})));
+  assert.equal(response.status, 422);
+  assert.match((await response.json()).error, /audio/i);
+});
+
+test('reports disguised audio as a failed job instead of rendering it', async (t) => {
   let renders = 0;
   const base = await studio(t, {render: async (job) => { renders++; await render(job); }});
-  for (const content of ['#EXTM3U\nhttps://example.org/audio.mp3\n', '']) {
-    const response = await post(base, form(project, new Blob([content], {type: 'audio/wav'})));
-    assert.equal(response.status, 422);
-    assert.match((await response.json()).error, /audio/i);
-  }
+  const jobId = await startJob(base, form(project, new Blob(['#EXTM3U\nhttps://example.org/audio.mp3\n'], {type: 'audio/wav'})));
+  const job = await waitForStatus(base, jobId, 'failed');
+  assert.match(job.error, /audio/i);
   assert.equal(renders, 0);
 });
 
@@ -354,14 +390,21 @@ test('rejects malformed multipart, invalid projects, and client media URLs', asy
   assert.equal(renders, 0);
 });
 
-test('rejects empty video and disguises outside the video demuxer allowlist', async (t) => {
-  const cases = {empty: new Blob([]), 'disguised WAV': wav(), corrupt: new Blob(['not a video'], {type: 'video/mp4'})};
+test('rejects empty video before a job is even created', async (t) => {
+  const base = await studio(t, {render: () => assert.fail('Empty video reached the renderer')});
+  const response = await post(base, form(project, undefined, new Blob([])));
+  assert.equal(response.status, 422);
+  assert.match((await response.json()).error, /video/i);
+});
+
+test('reports video disguises outside the demuxer allowlist as a failed job', async (t) => {
+  const cases = {'disguised WAV': wav(), corrupt: new Blob(['not a video'], {type: 'video/mp4'})};
   for (const [name, video] of Object.entries(cases)) {
     await t.test(name, async (t) => {
       const base = await studio(t, {render: () => assert.fail('Invalid media reached the renderer')});
-      const response = await post(base, form(project, undefined, video));
-      assert.equal(response.status, 422);
-      assert.match((await response.json()).error, /video/i);
+      const jobId = await startJob(base, form(project, undefined, video));
+      const job = await waitForStatus(base, jobId, 'failed');
+      assert.match(job.error, /video/i);
     });
   }
 });
@@ -393,7 +436,7 @@ test('rejects uploads above the video cap or the multipart parser cap', async (t
   overBody.resume();
 });
 
-test('rejects a second render until the first finishes', async (t) => {
+test('rejects a second render until the first job finishes', async (t) => {
   const entered = Promise.withResolvers();
   const release = Promise.withResolvers();
   const base = await studio(t, {render: async (job) => {
@@ -401,7 +444,7 @@ test('rejects a second render until the first finishes', async (t) => {
     await release.promise;
     await render(job);
   }});
-  const first = post(base);
+  const jobId = await startJob(base);
   const workspace = await entered.promise;
   try {
     const second = await post(base);
@@ -410,26 +453,107 @@ test('rejects a second render until the first finishes', async (t) => {
   } finally {
     release.resolve();
   }
-  await (await first).arrayBuffer();
+  const {file} = await downloadJob(base, jobId);
+  await file.arrayBuffer();
   await waitForRemoval(workspace);
-  const retry = await post(base);
-  assert.equal(retry.status, 200);
-  await retry.arrayBuffer();
+  const retry = await startJob(base);
+  const retryFile = await downloadJob(base, retry);
+  await retryFile.file.arrayBuffer();
 });
 
-test('aborts a disconnected render and removes its workspace', async (t) => {
+test('a render keeps running after the client that started it goes away', async (t) => {
   const entered = Promise.withResolvers();
-  const base = await studio(t, {render: async ({signal, workspace}) => {
-    entered.resolve(workspace);
-    await once(signal, 'abort');
-    signal.throwIfAborted();
+  const release = Promise.withResolvers();
+  const base = await studio(t, {render: async (job) => {
+    entered.resolve(job.workspace);
+    await release.promise;
+    await render(job);
   }});
   const controller = new AbortController();
-  const canceled = assert.rejects(fetch(`${base}/api/render`, {
-    method: 'POST', body: form(), signal: controller.signal,
-  }), {name: 'AbortError'});
+  const started = await fetch(`${base}/api/render`, {method: 'POST', body: form(), signal: controller.signal});
+  const jobId = (await started.json()).jobId;
   const workspace = await entered.promise;
   controller.abort();
-  await canceled;
+  const still = await (await fetch(`${base}/api/render/jobs/${jobId}`)).json();
+  assert.equal(still.status, 'running', 'A reload or closed tab must not abandon a running render');
+  release.resolve();
+  const {file} = await downloadJob(base, jobId);
+  assert.deepEqual(Buffer.from(await file.arrayBuffer()), mp4);
   await waitForRemoval(workspace);
+});
+
+test('cancels a running render and frees the single render slot', async (t) => {
+  const entered = Promise.withResolvers();
+  const base = await studio(t, {render: async (job) => {
+    entered.resolve(job.workspace);
+    // A cancel must stop this render; a later render in the same test must not.
+    await Promise.race([once(job.signal, 'abort'), delay(1500)]);
+    if (job.signal.aborted) throw job.signal.reason;
+    await render(job);
+  }});
+  const jobId = await startJob(base);
+  const workspace = await entered.promise;
+  const cancel = await fetch(`${base}/api/render/jobs/${jobId}/cancel`, {method: 'POST', headers: {Origin: base}});
+  assert.equal(cancel.status, 200);
+  assert.deepEqual(await cancel.json(), {id: jobId, status: 'cancelling'});
+  const job = await waitForStatus(base, jobId, 'cancelled');
+  assert.equal(job.error, undefined, 'A cancel is a decision, not an error');
+  await waitForRemoval(workspace);
+  const retry = await startJob(base);
+  const {file} = await downloadJob(base, retry);
+  await file.arrayBuffer();
+});
+
+test('serves the video only after the job is done, and only once', async (t) => {
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const base = await studio(t, {render: async (job) => {
+    entered.resolve(job.workspace);
+    await release.promise;
+    await render(job);
+  }});
+  const jobId = await startJob(base);
+  await entered.promise;
+  const early = await fetch(`${base}/api/render/jobs/${jobId}/file`);
+  assert.equal(early.status, 409, 'A render that is still running has no video yet');
+  await early.json();
+  release.resolve();
+  const {file} = await downloadJob(base, jobId);
+  assert.equal(file.status, 200);
+  assert.deepEqual(Buffer.from(await file.arrayBuffer()), mp4);
+  const again = await fetch(`${base}/api/render/jobs/${jobId}/file`);
+  assert.equal(again.status, 404, 'A downloaded video must not stay on the server');
+  await again.json();
+});
+
+test('removes a finished video that nobody downloads', async (t) => {
+  let workspace;
+  const base = await studio(t, {outputTtlMs: 40, render: async (job) => {
+    workspace = job.workspace;
+    await render(job);
+  }});
+  const jobId = await startJob(base);
+  const job = await waitForStatus(base, jobId, 'done');
+  assert.equal(job.status, 'done');
+  await delay(200);
+  const gone = await fetch(`${base}/api/render/jobs/${jobId}`);
+  assert.equal(gone.status, 404, 'An abandoned video must expire from the RAM-backed temp dir');
+  await gone.json();
+  await waitForRemoval(workspace);
+});
+
+test('refuses to cancel an unknown, finished, or cross-origin job', async (t) => {
+  const base = await studio(t);
+  const unknown = await fetch(`${base}/api/render/jobs/00000000-0000-4000-8000-000000000000/cancel`, {method: 'POST', headers: {Origin: base}});
+  assert.equal(unknown.status, 404);
+  await unknown.json();
+  const jobId = await startJob(base);
+  const {file} = await downloadJob(base, jobId);
+  await file.arrayBuffer();
+  const finished = await fetch(`${base}/api/render/jobs/${jobId}/cancel`, {method: 'POST', headers: {Origin: base}});
+  assert.equal(finished.status, 404);
+  await finished.json();
+  const foreign = await post(base, form(), {Origin: 'https://example.org'});
+  assert.equal(foreign.status, 403);
+  await foreign.json();
 });

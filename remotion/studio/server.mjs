@@ -2,7 +2,7 @@ import {spawn} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
 import {once} from 'node:events';
 import {createWriteStream} from 'node:fs';
-import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
+import {mkdtemp, readdir, readFile, rm, writeFile} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {BlockList, Server as NetServer} from 'node:net';
 import {networkInterfaces, tmpdir} from 'node:os';
@@ -29,6 +29,12 @@ const progressPrefix = '#remain-progress#';
 // backwards when a stage restarts its own 0-100 scale.
 const phaseFloor = {upload: 0, prepare: 5, bundle: 5, render: 25, encoding: 25, muxing: 25, done: 100};
 const phaseSpan = {prepare: 0, bundle: 20, render: 75, encoding: 75, muxing: 75};
+// A finished MP4 waits in the job directory until it is downloaded, or this long
+// passes. The host keeps /tmp on tmpfs, so an abandoned video must not linger.
+const jobOutputTtlMs = 30 * 60_000;
+// A finished, failed or cancelled job stays readable for a short while, because
+// a client that was reloading needs to learn how its render ended.
+const jobRecordGraceMs = 60_000;
 
 class RequestError extends Error {
   constructor(status, message) {
@@ -85,11 +91,13 @@ async function parseUpload(req, res) {
     throw new RequestError(400, 'Audio must be uploaded as a file.');
   }
   if (audio?.size > maxAudioBytes) throw new RequestError(413, 'Audio is limited to 25 MiB.');
+  if (audio?.size === 0) throw new RequestError(422, 'The audio file is empty.');
   const video = form.get('video');
   if (video !== null && !(video instanceof File)) {
     throw new RequestError(400, 'Video must be uploaded as a file.');
   }
   if (video?.size > maxVideoBytes) throw new RequestError(413, 'Video is limited to 100 MiB.');
+  if (video?.size === 0) throw new RequestError(422, 'The video file is empty.');
   return {project, audio, video};
 }
 
@@ -165,7 +173,9 @@ async function normalizeVideo(video, project, workspace, signal) {
 }
 
 export async function startStudioServer({port = process.env.PORT ?? 4317,
-  bindHost = process.env.STUDIO_BIND ?? host, lanHost = process.env.STUDIO_LAN_HOST, render = runRenderer, staticRoot = dist, dev = false} = {}) {
+  bindHost = process.env.STUDIO_BIND ?? host, lanHost = process.env.STUDIO_LAN_HOST, render = runRenderer,
+  staticRoot = dist, dev = false, outputTtlMs = Number(process.env.STUDIO_RENDER_TTL_MS ?? jobOutputTtlMs)} = {}) {
+  if (!Number.isFinite(outputTtlMs) || outputTtlMs < 0) throw Error('outputTtlMs must be a non-negative number.');
   if (bindHost !== host && bindHost !== '0.0.0.0') throw Error('STUDIO_BIND must be 127.0.0.1 or 0.0.0.0.');
   let lanPeers;
   if (bindHost === '0.0.0.0') {
@@ -182,12 +192,6 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
   }
   const app = express();
   app.disable('x-powered-by');
-  let active = false;
-  let media;
-  // Studio admits one render at a time, so one progress slot is enough for the
-  // client to poll while the render POST is still open. It carries no paths.
-  let job = null;
-
   const allowedLocalRequest = req => {
     const authority = req.headers.host;
     const boundPort = req.socket.localPort;
@@ -200,6 +204,106 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     if (!allowedLocalRequest(req)) return res.status(403).json({error: 'Studio only accepts requests from its configured local network.'});
     next();
   });
+
+  // A render is a job, not a request. Closing the tab must not kill it, and the
+  // finished MP4 waits in the job directory until it is downloaded or expires.
+  // Job ids are random UUIDs and are the only handle to a job; nothing a client
+  // sends is ever used as a path.
+  const jobs = new Map();
+  let running = null;
+  let media;
+
+  const jobView = (job) => ({
+    id: job.id,
+    status: job.status,
+    phase: job.phase,
+    progress: job.progress,
+    renderedFrames: job.renderedFrames,
+    totalFrames: job.totalFrames,
+    etaMs: job.etaMs,
+    elapsedMs: (job.finishedAtMs ?? Date.now()) - job.createdAtMs,
+    ...(job.error ? {error: job.error} : {}),
+  });
+  const sameOriginRequest = (req) => {
+    const origin = req.headers.origin;
+    const site = req.headers['sec-fetch-site'];
+    return !((origin !== undefined && origin !== `http://${req.headers.host}`)
+      || (site !== undefined && site !== 'same-origin' && site !== 'none'));
+  };
+  const removeJobFiles = async (job) => {
+    try {
+      await rm(job.dir, {recursive: true, force: true});
+    } catch (error) {
+      console.error('Studio render cleanup failed:', error);
+    }
+  };
+  const disposeJob = async (job) => {
+    jobs.delete(job.id);
+    if (job.timer) clearTimeout(job.timer);
+    await removeJobFiles(job);
+  };
+  // The workspace is gone but the outcome stays readable, so a client that was
+  // mid-reload can still report 'Đã huỷ' instead of losing the job entirely.
+  const retireJob = (job) => {
+    if (job.timer) clearTimeout(job.timer);
+    job.timer = setTimeout(() => jobs.delete(job.id), jobRecordGraceMs);
+    job.timer.unref?.();
+  };
+
+  const runJob = async (job, {project, audio, video, localPort}) => {
+    const assets = {};
+    media = assets;
+    const report = (update) => {
+      if (job.status !== 'running') return;
+      const ratio = Math.min(1, Math.max(0, update.progress ?? job.progress));
+      Object.assign(job, update, {
+        progress: ((phaseFloor[update.phase] ?? 0) + (phaseSpan[update.phase] ?? 0) * ratio) / 100,
+      });
+    };
+    try {
+      const prepare = async (kind, file, normalize) => {
+        if (!file) return null;
+        const path = await normalize(file, project, job.dir, job.controller.signal);
+        const id = randomUUID();
+        assets[kind] = {id, path};
+        return `http://${host}:${localPort}/api/internal/${kind}/${id}`;
+      };
+      if (audio || video) report({phase: 'prepare'});
+      const audioSrc = await prepare('audio', audio, normalizeAudio);
+      const videoSrc = await prepare('video', video, normalizeVideo);
+      const range = project.renderRange;
+      await render({inputProps: {project, audioSrc, videoSrc},
+        ...(range ? {frameRange: [range.startFrame, range.endFrame - 1]} : {}),
+        outputLocation: job.outputLocation, workspace: job.dir,
+        signal: job.controller.signal, report});
+      // Normalized media, the bundle and the worker job file are transient: only
+      // the MP4 survives, and only until it is downloaded or the TTL expires.
+      for (const entry of await readdir(job.dir)) {
+        if (entry !== 'clip.mp4') await rm(join(job.dir, entry), {recursive: true, force: true});
+      }
+      job.status = 'done';
+      job.phase = 'done';
+      job.progress = 1;
+      job.finishedAtMs = Date.now();
+      job.timer = setTimeout(() => void disposeJob(job), outputTtlMs);
+      job.timer.unref?.();
+    } catch (error) {
+      const cancelled = job.controller.signal.aborted;
+      job.status = cancelled ? 'cancelled' : 'failed';
+      job.phase = job.status;
+      job.finishedAtMs = Date.now();
+      if (!cancelled) {
+        job.error = error instanceof RequestError ? error.message
+          : 'Could not render the video. Check the Studio server logs.';
+        if (!(error instanceof RequestError)) console.error('Studio render failed:', error);
+      }
+      await removeJobFiles(job);
+      retireJob(job);
+    } finally {
+      media = undefined;
+      if (running === job.id) running = null;
+    }
+  };
 
   app.get('/api/internal/:kind/:id', async (req, res) => {
     const {kind, id} = req.params;
@@ -216,83 +320,85 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     }
   });
 
-  app.get('/api/render/progress', (req, res) => {
+  app.get('/api/render/jobs/:id', (req, res) => {
     res.set('Cache-Control', 'no-store');
-    res.json(job ? {active: true, ...job} : {active: false, phase: 'idle', progress: 0,
-      renderedFrames: 0, totalFrames: null, etaMs: null, elapsedMs: 0});
+    const job = jobs.get(req.params.id);
+    if (!job) return res.status(404).json({error: 'That render job no longer exists.'});
+    res.json(jobView(job));
+  });
+
+  app.get('/api/render/jobs/:id/file', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const job = jobs.get(req.params.id);
+    if (!job) return res.status(404).json({error: 'That render job no longer exists.'});
+    if (job.status !== 'done') return res.status(409).json({error: 'That render has no finished video yet.'});
+    try {
+      res.type('mp4').attachment('remain-studio.mp4');
+      await sendFile(res, job.outputLocation);
+      await disposeJob(job);
+    } catch (error) {
+      console.error('Studio video download failed:', error);
+      if (res.headersSent) res.destroy();
+      else res.sendStatus(404);
+    }
+  });
+
+  app.post('/api/render/jobs/:id/cancel', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!sameOriginRequest(req)) return res.status(403).json({error: 'Open Studio locally to cancel a render.'});
+    const job = jobs.get(req.params.id);
+    if (!job) return res.status(404).json({error: 'That render job no longer exists.'});
+    if (job.status !== 'running') return res.status(409).json({error: 'That render already finished.'});
+    job.controller.abort();
+    res.json({id: job.id, status: 'cancelling'});
   });
 
   app.post('/api/render', async (req, res) => {
     res.set('Cache-Control', 'no-store');
-    const origin = req.headers.origin;
-    const site = req.headers['sec-fetch-site'];
-    if ((origin !== undefined && origin !== `http://${req.headers.host}`) ||
-      (site !== undefined && site !== 'same-origin' && site !== 'none')) {
-      return res.status(403).json({error: 'Open Studio locally to render a video.'});
-    }
-    if (active) return res.status(409).json({error: 'A render is already in progress.'});
-    active = true;
-    const startedAt = Date.now();
-    job = {phase: 'upload', progress: 0, renderedFrames: 0, totalFrames: null, etaMs: null, elapsedMs: 0};
-    const report = (update) => {
-      if (!active || !job) return;
-      const ratio = Math.min(1, Math.max(0, update.progress ?? job.progress));
-      const progress = ((phaseFloor[update.phase] ?? 0) + (phaseSpan[update.phase] ?? 0) * ratio) / 100;
-      job = {...job, ...update, progress, elapsedMs: Date.now() - startedAt};
-    };
-    let workspace;
-    const disconnect = new AbortController();
-    const onClose = () => { if (!res.writableFinished) disconnect.abort(); };
-    res.once('close', onClose);
+    if (!sameOriginRequest(req)) return res.status(403).json({error: 'Open Studio locally to render a video.'});
+    if (running) return res.status(409).json({error: 'A render is already in progress.'});
+    let upload;
     try {
-      const {project, audio, video} = await parseUpload(req, res);
-      disconnect.signal.throwIfAborted();
-      workspace = await mkdtemp(join(tmpdir(), 'remain-studio-'));
-      const outputLocation = join(workspace, 'clip.mp4');
-      const assets = {};
-      const prepare = async (kind, file, normalize) => {
-        if (!file) return null;
-        const path = await normalize(file, project, workspace, disconnect.signal);
-        const id = randomUUID();
-        assets[kind] = {id, path};
-        return `http://${host}:${req.socket.localPort}/api/internal/${kind}/${id}`;
-      };
-      if (audio || video) report({phase: 'prepare'});
-      const audioSrc = await prepare('audio', audio, normalizeAudio);
-      const videoSrc = await prepare('video', video, normalizeVideo);
-      media = assets;
-      const range = project.renderRange;
-      const renderOptions = range ? {frameRange: [range.startFrame, range.endFrame - 1]} : {};
-      await render({inputProps: {project, audioSrc, videoSrc}, ...renderOptions,
-        outputLocation, workspace, signal: disconnect.signal, report});
-      media = undefined;
-      disconnect.signal.throwIfAborted();
-      res.type('mp4').attachment('remain-studio.mp4');
-      await sendFile(res, outputLocation);
+      upload = await parseUpload(req, res);
     } catch (error) {
       if (res.destroyed) return;
       if (res.headersSent) return res.destroy();
-      res.removeHeader('Content-Disposition');
-      res.removeHeader('Content-Type');
       if (error instanceof RequestError) return res.status(error.status).json({error: error.message});
-      console.error('Studio render failed:', error);
-      res.status(500).json({error: 'Could not render the video. Check the Studio server logs.'});
-    } finally {
-      media = undefined;
-      job = null;
-      // Release the render slot before awaiting file cleanup, otherwise the
-      // next request can be rejected as busy while this one is still cleaning.
-      active = false;
-      res.off('close', onClose);
-      try {
-        if (workspace) await rm(workspace, {recursive: true, force: true});
-      } catch (error) {
-        console.error('Studio temporary file cleanup failed:', error);
-      }
+      console.error('Studio upload failed:', error);
+      res.status(500).json({error: 'Could not read the upload. Check the Studio server logs.'});
+      return;
     }
+    let dir;
+    try {
+      dir = await mkdtemp(join(tmpdir(), 'remain-render-'));
+    } catch (error) {
+      console.error('Studio render workspace failed:', error);
+      return res.status(500).json({error: 'Could not create a render workspace.'});
+    }
+    const job = {id: randomUUID(), status: 'running', phase: 'upload', progress: 0,
+      renderedFrames: 0, totalFrames: null, etaMs: null, createdAtMs: Date.now(),
+      finishedAtMs: null, error: null, dir, outputLocation: join(dir, 'clip.mp4'),
+      controller: new AbortController(), timer: null};
+    jobs.set(job.id, job);
+    // Claim the single render slot before anything else can race for it.
+    running = job.id;
+    res.status(202).json({jobId: job.id});
+    // The job outlives this request on purpose: a reload or a closed tab must
+    // not abandon a render that is already spending CPU.
+    void runJob(job, {...upload, localPort: req.socket.localPort});
   });
 
   const server = createServer({headersTimeout: 10_000, requestTimeout: 120_000, connectionsCheckingInterval: 1000}, app);
+  server.once('close', () => {
+    // A Studio that is going down must not leave Chromium or ffmpeg children of a
+    // running job behind, because those jobs no longer have anyone to report to.
+    for (const job of jobs.values()) {
+      job.controller.abort();
+      if (job.timer) clearTimeout(job.timer);
+      void removeJobFiles(job);
+    }
+    jobs.clear();
+  });
   const vite = dev ? await mountStudioVite(app, server, allowedLocalRequest) : null;
   if (!vite) app.use(express.static(staticRoot));
   try {
@@ -443,6 +549,12 @@ if (process.argv[1] && resolve(process.argv[1]) === serverFile) {
     await renderWorker(...process.argv.slice(3));
   } else {
     const dev = process.argv.includes('--dev');
+    // A crash or a restart can leave job directories in the RAM-backed temp dir,
+    // and nothing else ever reclaims that memory. Only the real server process
+    // sweeps, so test servers running side by side cannot delete each other.
+    for (const entry of await readdir(tmpdir()).catch(() => [])) {
+      if (entry.startsWith('remain-render-')) await rm(join(tmpdir(), entry), {recursive: true, force: true}).catch(() => {});
+    }
     const server = await startStudioServer({dev});
     console.log(`Remain Studio${dev ? ' (dev)' : ''}: http://${host}:${server.address().port}`);
     if (server.address().address === '0.0.0.0') console.log(`Remain Studio LAN: http://${process.env.STUDIO_LAN_HOST}:${server.address().port}`);

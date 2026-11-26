@@ -69,9 +69,28 @@ try {
     assert.ok(percents[i] >= percents[i - 1], `Bar went backwards: ${percents}`);
   }
   assert.equal(await page.locator('.render-progress').count(), 0, 'Progress must clear after the render');
+
+  // Cancelling must stop the job, clear the bar and produce no file.
+  await page.getByLabel('Kết thúc (giây)').fill('30');
+  const cancel = page.getByRole('button', {name: 'Huỷ render'});
+  assert.equal(await cancel.count(), 0, 'No cancel button while nothing is rendering');
+  await page.getByRole('button', {name: /^Xuất MP4|^Đang render/}).click();
+  await page.locator('.render-progress').waitFor();
+  await cancel.waitFor();
+  await delay(1500);
+  const strayDownload = await Promise.race([
+    page.waitForEvent('download', {timeout: 3000}).then(() => true, () => false),
+    delay(3100).then(() => false),
+  ]);
+  assert.equal(strayDownload, false, 'A cancelled render must not deliver a file');
+  await cancel.click();
+  await cancel.waitFor({state: 'hidden', timeout: 30_000});
+  assert.equal(await page.locator('.render-progress').count(), 0, 'Cancelling must clear the progress panel');
+  assert.match(await page.locator('footer div').textContent(), /Đã huỷ render/);
+
   assert.deepEqual(errors, []);
   console.log(`UI verified: ${samples.length} samples, bar ${percents[0]}% -> ${Math.max(...percents)}%, `
-    + `download ${event.suggestedFilename()}.`);
+    + `download ${event.suggestedFilename()}, then cancelled a second render.`);
   console.log(`Panel screenshot: ${shot}`);
 } finally {
   await browser.close();
