@@ -250,6 +250,54 @@ test('passes an inclusive Remotion range without shifting the media or shortenin
   await response.arrayBuffer();
 });
 
+test('reports render progress while a render is running', async (t) => {
+  const entered = Promise.withResolvers();
+  const midRender = Promise.withResolvers();
+  const base = await studio(t, {render: async (job) => {
+    entered.resolve(job);
+    await midRender.promise;
+    await render(job);
+  }});
+  const first = post(base);
+  const job = await entered.promise;
+  const started = await (await fetch(`${base}/api/render/progress`)).json();
+  assert.equal(started.active, true);
+  assert.equal(started.phase, 'upload');
+  assert.equal(started.progress, 0);
+  job.report({phase: 'bundle', progress: 0.5});
+  job.report({phase: 'render', progress: 0.4, renderedFrames: 12, totalFrames: 30, etaMs: 6000});
+  const running = await (await fetch(`${base}/api/render/progress`)).json();
+  assert.deepEqual(running, {active: true, phase: 'render', progress: 0.55, renderedFrames: 12,
+    totalFrames: 30, etaMs: 6000, elapsedMs: running.elapsedMs});
+  assert.ok(running.elapsedMs >= 0);
+  assert.equal(JSON.stringify(running).includes(job.workspace), false,
+    'Progress must not expose render workspace paths');
+  const busy = await post(base);
+  assert.equal(busy.status, 409);
+  await busy.json();
+  job.report({phase: 'muxing', progress: 1});
+  const finishing = await (await fetch(`${base}/api/render/progress`)).json();
+  assert.equal(finishing.progress, 1, 'The last stage must close the bar at 100%');
+  midRender.resolve();
+  const response = await first;
+  assert.equal(response.status, 200);
+  await response.arrayBuffer();
+  const idle = await (await fetch(`${base}/api/render/progress`)).json();
+  assert.deepEqual(idle, {active: false, phase: 'idle', progress: 0, renderedFrames: 0,
+    totalFrames: null, etaMs: null, elapsedMs: 0});
+});
+
+test('progress reads stay inside the same local network boundary as renders', async (t) => {
+  const base = await studio(t);
+  const response = await new Promise((resolve, reject) => {
+    const req = request(`${base}/api/render/progress`, {headers: {Host: 'example.org:4317'}}, resolve);
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(response.statusCode, 403);
+  response.resume();
+});
+
 async function waitForRemoval(workspace) {
   for (let attempt = 0; attempt < 25; attempt++) {
     try {

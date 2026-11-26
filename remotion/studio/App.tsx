@@ -14,6 +14,10 @@ const seconds=(n:number)=>n.toFixed(2)+'s';
 const errText=(e:unknown)=>e instanceof Error?e.message:String(e);
 type MediaKind='audio'|'video';
 type LocalMedia={file:File;src:string;seconds:number};
+type RenderJob={phase:string;progress:number;renderedFrames:number|null;totalFrames:number|null;etaSeconds:number|null};
+const PHASE_LABEL:Record<string,string>={upload:'Đang tải project lên máy chủ',prepare:'Đang chuẩn bị nhạc và video',bundle:'Đang đóng gói bundle',render:'Đang render khung hình',encoding:'Đang render và mã hoá khung hình',muxing:'Đang ghép âm thanh',done:'Hoàn tất'};
+const etaText=(seconds:number)=>seconds<60?`còn ~${seconds} giây`:`còn ~${Math.floor(seconds/60)} phút ${seconds%60} giây`;
+const renderStatus=(job:RenderJob)=>[PHASE_LABEL[job.phase] ?? 'Đang render…',`${Math.round(job.progress*100)}%`,job.totalFrames?`${job.renderedFrames}/${job.totalFrames} khung`:null,job.etaSeconds!==null?etaText(job.etaSeconds):null].filter(Boolean).join(' · ');
 
 export default function Studio() {
   const player=useRef<PlayerRef>(null);
@@ -31,6 +35,7 @@ export default function Studio() {
   const [frame,setFrame]=useState(0);
   const [playing,setPlaying]=useState(false);
   const [busy,setBusy]=useState(false);
+  const [renderJob,setRenderJob]=useState<RenderJob|null>(null);
   const [notice,setNotice]=useState('');
   const [error,setError]=useState('');
   const [renderMode,setRenderMode]=useState<'all'|'range'>('all');
@@ -238,8 +243,24 @@ export default function Studio() {
       setNotice(`Đã nạp ${file.name}. ${loaded.media.audio||loaded.media.video?'Hãy chọn lại nhạc và video từ máy.':''}`);
     } catch(e){setError(errText(e));}
   }
+  const pollRenderJob=useEffectEvent(async()=>{
+    try {
+      const response=await fetch('/api/render/progress',{cache:'no-store'});
+      if(!response.ok)return;
+      const job=await response.json();
+      if(!job?.active)return;
+      setRenderJob({phase:job.phase,progress:job.progress,renderedFrames:job.renderedFrames??null,
+        totalFrames:job.totalFrames??null,etaSeconds:Number.isFinite(job.etaMs)?Math.max(0,Math.round(job.etaMs/1000)):null});
+    } catch {
+      // A dropped poll is retried on the next tick; the render POST stays the source of truth.
+    }
+  });
   async function exportClip() {
     setError('');setNotice('');setBusy(true);
+    setRenderJob({phase:'upload',progress:0,renderedFrames:null,totalFrames:null,etaSeconds:null});
+    // The render POST only answers with the MP4 at the end, so progress is read
+    // from a side channel while that request stays open.
+    const poll=window.setInterval(()=>void pollRenderJob(),700);
     try {
       const data=new FormData();data.set('project',JSON.stringify(validateProject({...project,renderRange})));
       if(audio)data.set('audio',audio.file);
@@ -251,7 +272,7 @@ export default function Studio() {
       const a=document.createElement('a');a.href=url;a.download=renderRange?'remain-studio-segment.mp4':'remain-studio.mp4';a.click();
       window.setTimeout(()=>URL.revokeObjectURL(url),60000);setNotice('Đã xuất MP4.');
     } catch(e){setError(errText(e));}
-    finally {setBusy(false);}
+    finally {window.clearInterval(poll);setRenderJob(null);setBusy(false);}
   }
 
   const tapFromKeyboard = useEffectEvent((e: KeyboardEvent) => {
@@ -309,7 +330,7 @@ export default function Studio() {
     <header className="topbar">
       <div className="identity"><span className="mark" aria-hidden="true">R</span><div><h1>Remain Studio</h1><span>VIDEO CHỮ CHUYỂN ĐỘNG</span></div></div>
       <div className="toolbar"><label>Khung hình<select value={wide?'wide':'tall'} onChange={e=>setWide(e.target.value==='wide')}><option value="tall">9:16 · Dọc</option><option value="wide">16:9 · Ngang</option></select></label>
-      <Button type="button" className="px-3 font-semibold min-[781px]:px-4" disabled={busy || Boolean(rangeError) || (!visibleCues.length && !audio && !video)} onClick={exportClip}>{busy?'Đang render…':'Xuất MP4'}</Button></div>
+      <Button type="button" className="px-3 font-semibold min-[781px]:px-4" disabled={busy || Boolean(rangeError) || (!visibleCues.length && !audio && !video)} onClick={exportClip}>{busy?(renderJob?`Đang render… ${Math.round(renderJob.progress*100)}%`:'Đang render…'):'Xuất MP4'}</Button></div>
     </header>
     <main className="workspace mt-3 grid grid-cols-1 gap-3 min-[781px]:grid-cols-[minmax(0,1fr)_minmax(296px,354px)]">
       <section className="viewer" aria-label="Preview">
@@ -355,6 +376,7 @@ export default function Studio() {
     </section>
     <section className="export-options" aria-label="Thiết lập xuất video">
       <div className="section-bar"><h2>Thiết lập xuất</h2><output id="render-duration">{rangeError?'—':seconds((renderRange?renderRange.endFrame-renderRange.startFrame:length)/FPS)}</output></div>
+      {busy && <div className="render-progress"><progress value={Math.round((renderJob?.progress ?? 0)*100)} max={100}/><span role="status" aria-live="polite">{renderJob?renderStatus(renderJob):'Đang chuẩn bị render…'}</span></div>}
       <div className="range-fields flex flex-wrap items-end gap-3">
         <label>Phạm vi xuất<select value={renderMode} onChange={e=>setRenderMode(e.target.value==='range'?'range':'all')}><option value="all">Toàn bộ timeline</option><option value="range">Một đoạn</option></select></label>
         {renderMode==='range' && <>

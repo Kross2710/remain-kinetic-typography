@@ -22,6 +22,13 @@ const maxAudioBytes = 25 * 1024 * 1024;
 const maxVideoBytes = 100 * 1024 * 1024;
 const maxBodyBytes = maxAudioBytes + maxVideoBytes + 1024 * 1024;
 const parseBody = express.raw({type: () => true, limit: maxBodyBytes, inflate: false});
+// The render worker reports progress on its stdout. Remotion logs to stdout
+// too, so every progress line carries this marker.
+const progressPrefix = '#remain-progress#';
+// One bar for the whole job: each stage owns a slice, so the bar never walks
+// backwards when a stage restarts its own 0-100 scale.
+const phaseFloor = {upload: 0, prepare: 5, bundle: 5, render: 25, encoding: 25, muxing: 25, done: 100};
+const phaseSpan = {prepare: 0, bundle: 20, render: 75, encoding: 75, muxing: 75};
 
 class RequestError extends Error {
   constructor(status, message) {
@@ -177,6 +184,9 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
   app.disable('x-powered-by');
   let active = false;
   let media;
+  // Studio admits one render at a time, so one progress slot is enough for the
+  // client to poll while the render POST is still open. It carries no paths.
+  let job = null;
 
   const allowedLocalRequest = req => {
     const authority = req.headers.host;
@@ -206,6 +216,12 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     }
   });
 
+  app.get('/api/render/progress', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    res.json(job ? {active: true, ...job} : {active: false, phase: 'idle', progress: 0,
+      renderedFrames: 0, totalFrames: null, etaMs: null, elapsedMs: 0});
+  });
+
   app.post('/api/render', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     const origin = req.headers.origin;
@@ -216,6 +232,14 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     }
     if (active) return res.status(409).json({error: 'A render is already in progress.'});
     active = true;
+    const startedAt = Date.now();
+    job = {phase: 'upload', progress: 0, renderedFrames: 0, totalFrames: null, etaMs: null, elapsedMs: 0};
+    const report = (update) => {
+      if (!active || !job) return;
+      const ratio = Math.min(1, Math.max(0, update.progress ?? job.progress));
+      const progress = ((phaseFloor[update.phase] ?? 0) + (phaseSpan[update.phase] ?? 0) * ratio) / 100;
+      job = {...job, ...update, progress, elapsedMs: Date.now() - startedAt};
+    };
     let workspace;
     const disconnect = new AbortController();
     const onClose = () => { if (!res.writableFinished) disconnect.abort(); };
@@ -233,13 +257,14 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
         assets[kind] = {id, path};
         return `http://${host}:${req.socket.localPort}/api/internal/${kind}/${id}`;
       };
+      if (audio || video) report({phase: 'prepare'});
       const audioSrc = await prepare('audio', audio, normalizeAudio);
       const videoSrc = await prepare('video', video, normalizeVideo);
       media = assets;
       const range = project.renderRange;
       const renderOptions = range ? {frameRange: [range.startFrame, range.endFrame - 1]} : {};
       await render({inputProps: {project, audioSrc, videoSrc}, ...renderOptions,
-        outputLocation, workspace, signal: disconnect.signal});
+        outputLocation, workspace, signal: disconnect.signal, report});
       media = undefined;
       disconnect.signal.throwIfAborted();
       res.type('mp4').attachment('remain-studio.mp4');
@@ -254,13 +279,15 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
       res.status(500).json({error: 'Could not render the video. Check the Studio server logs.'});
     } finally {
       media = undefined;
+      job = null;
+      // Release the render slot before awaiting file cleanup, otherwise the
+      // next request can be rejected as busy while this one is still cleaning.
+      active = false;
       res.off('close', onClose);
       try {
         if (workspace) await rm(workspace, {recursive: true, force: true});
       } catch (error) {
         console.error('Studio temporary file cleanup failed:', error);
-      } finally {
-        active = false;
       }
     }
   });
@@ -308,7 +335,7 @@ async function mountStudioVite(app, server, allowedLocalRequest) {
   return vite;
 }
 
-async function runRenderer({inputProps, frameRange, outputLocation, workspace, signal}) {
+async function runRenderer({inputProps, frameRange, outputLocation, workspace, signal, report}) {
   const jobPath = join(workspace, 'render-job.json');
   await writeFile(jobPath, JSON.stringify({inputProps, frameRange}), {signal});
   const frames = frameRange ? frameRange[1] - frameRange[0] + 1 : inputProps.project.durationInFrames;
@@ -316,7 +343,7 @@ async function runRenderer({inputProps, frameRange, outputLocation, workspace, s
   const timeoutMs = Math.min(12 * 60 * 60_000, 5 * 60_000 + 10_000 * frames / FPS);
   try {
     await runProcess(process.execPath, [serverFile, '--render-worker', workspace, jobPath, outputLocation], {
-      workspace, signal, timeoutMs,
+      workspace, signal, timeoutMs, onProgressLine: report,
     });
   } catch (error) {
     if (error.code === 'JOB_TIMEOUT') throw new RequestError(504, 'Video rendering timed out.');
@@ -324,19 +351,36 @@ async function runRenderer({inputProps, frameRange, outputLocation, workspace, s
   }
 }
 
-function runProcess(command, args, {workspace, signal, timeoutMs}) {
+function runProcess(command, args, {workspace, signal, timeoutMs, onProgressLine}) {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const detached = process.platform !== 'win32';
     const child = spawn(command, args, {
       detached,
       env: {...process.env, TMPDIR: workspace, TEMP: workspace, TMP: workspace},
-      stdio: ['ignore', 'ignore', 'pipe'],
+      stdio: ['ignore', onProgressLine ? 'pipe' : 'ignore', 'pipe'],
     });
     let stderr = '';
+    let stdoutTail = '';
     let failure;
     child.stderr.setEncoding('utf8');
     child.stderr.on('data', (chunk) => { stderr = (stderr + chunk).slice(-8192); });
+    if (onProgressLine) {
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (chunk) => {
+        stdoutTail = (stdoutTail + chunk).slice(-16_384);
+        const lines = stdoutTail.split('\n');
+        stdoutTail = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith(progressPrefix)) continue;
+          try {
+            onProgressLine(JSON.parse(line.slice(progressPrefix.length)));
+          } catch {
+            // A malformed progress line must not fail an otherwise healthy render.
+          }
+        }
+      });
+    }
     const stop = (error) => {
       if (failure) return;
       failure = error;
@@ -373,10 +417,24 @@ async function renderWorker(workspace, jobPath, outputLocation) {
     import('@remotion/bundler'), import('@remotion/renderer'),
   ]);
   const {inputProps, frameRange} = JSON.parse(await readFile(jobPath, 'utf8'));
-  const serveUrl = await bundle({entryPoint: renderEntry, outDir: join(workspace, 'bundle')});
+  const totalFrames = frameRange ? frameRange[1] - frameRange[0] + 1 : inputProps.project.durationInFrames;
   const browserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE || undefined;
+  const report = (update) => process.stdout.write(`${progressPrefix}${JSON.stringify(update)}\n`);
+  // Bundlers and frame renderers report far more often than a UI needs.
+  let lastPercent = -1;
+  const emit = (update) => {
+    const percent = Math.round((update.progress ?? 0) * 100);
+    if (percent > lastPercent) { lastPercent = percent; report(update); }
+  };
+  // bundle() reports a 0-100 percentage, not a 0-1 ratio.
+  const serveUrl = await bundle({entryPoint: renderEntry, outDir: join(workspace, 'bundle'),
+    onProgress: (percent) => emit({phase: 'bundle', progress: percent / 100})});
+  lastPercent = -1;
   const composition = await selectComposition({serveUrl, id: 'StudioClip', inputProps, browserExecutable});
+  report({phase: 'render', progress: 0, renderedFrames: 0, totalFrames, etaMs: null});
   await renderMedia({serveUrl, composition, inputProps, outputLocation, codec: 'h264', concurrency: 1, browserExecutable,
+    onProgress: ({progress, renderedFrames, renderEstimatedTime, stitchStage}) =>
+      emit({phase: stitchStage, progress, renderedFrames, totalFrames, etaMs: renderEstimatedTime}),
     ...(frameRange ? {frameRange} : {})});
 }
 
