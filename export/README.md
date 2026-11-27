@@ -22,6 +22,8 @@ Render animation kinetic-typography (chữ + nền video + nhạc) ra **MP4 1080
    ```bash
    node capture.mjs 16:9 --q 720 --fps 30 --seconds 12   # thử nhanh nghiệm thu (~12s đầu)
    node capture.mjs both                                  # final 1080p60 cả hai tỉ lệ
+   npm run both:gpu                                       # bản nhanh: iGPU vẽ + iGPU encode
+   npm run fast:gpu                                       # nhanh nhất: đa lõi + iGPU vẽ + iGPU encode
    ```
    Cờ: `--q 1080|720` (cạnh ngắn) · `--fps 30|60` · `--seconds N` (giới hạn để test) · `--hw` (encode bằng GPU của máy đang chạy) · `--gpu` (Chrome **vẽ** bằng iGPU).
    `--hw` **tự chọn encoder theo thiết bị**: macOS → `h264_videotoolbox` · Linux/Intel-AMD (có `/dev/dri/renderD128`) → `h264_vaapi` · NVIDIA → `h264_nvenc`. Ghi đè: `HW_ENCODER=vaapi|videotoolbox|nvenc|x264`, `VAAPI_DEVICE=/dev/dri/renderD128`.
