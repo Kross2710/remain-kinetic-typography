@@ -29,7 +29,7 @@ export function WhisperLine({cue,effect,time,scale,hasVideo,past=false,shared}: 
   const elapsed=time-cue.start;
   const size=scale*.085*(cue.text.length>60?.82:1)*effect.size;
   const replacesEntry=Boolean(shared?.entry || shared?.ink);
-  const glyphs=cue.hook&&!replacesEntry ? cue.words.map(word=>whisperGraphemes(word.text)) : null;
+  const glyphs=cue.hook&&!shared?.ink ? cue.words.map(word=>whisperGraphemes(word.text)) : null;
   const count=glyphs?.reduce((total,word)=>total+word.length,0) ?? 0;
   const gap=count>1?Math.min(.042,.48/(count-1)):0;
   const stagger=cue.words.length>1?Math.min(effect.stagger,.4/(cue.words.length-1)):0;

@@ -52,7 +52,8 @@ export function Scene({project,audioSrc,videoSrc}:SceneProps) {
   const [line]=activeAt(project.cues,t);
   const cue=project.cues[line];
   const effect=cue?.effect ?? project.effect ?? PRESETS.classic;
-  const whisper=effect.preset==='whisper';
+  const projectWhisper=project.effect?.preset==='whisper';
+  const whisper=projectWhisper;
   const scale=Math.min(width,height);
   const flow=project.effect?.motion?.flow===true;
   const stack=!flow&&whisper&&cue?whisperStack(project.cues,line,frame,fps):[];
