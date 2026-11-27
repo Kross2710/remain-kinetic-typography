@@ -19,3 +19,4 @@ assets/video/*.m4v
 export/node_modules/
 export/out/
 export/frames/
+remotion/node_modules
