@@ -4,16 +4,17 @@ import {FPS} from './project.mjs';
 export function moveCue(cues,index,start,duration) {
   const cue=cues[index];
   const delta=start-cue?.start;
-  const end=Math.min(cues[index+1]?.start ?? duration,duration);
+  const nextStart=cues[index+1]?.start;
+  const startEnd=Math.min(nextStart ?? duration,duration);
   if (!cue || !Number.isFinite(start) || start<0 || start<=(cues[index-1]?.words.at(-1).start ?? -1) ||
-      start>=end || cue.words.at(-1).start+delta>=end) throw Error('Không thể di chuyển dòng qua từ hoặc ranh giới dòng khác.');
+      start>=startEnd || (nextStart!=null && cue.words.at(-1).start+delta>=nextStart)) throw Error('Không thể di chuyển dòng qua từ hoặc ranh giới dòng khác.');
   if (delta===0) return cues;
   return cues.map((item,i)=>i===index?{...item,start,words:item.words.map(w=>({...w,start:w.start+delta}))}:item);
 }
 
 export function trimCue(cues,index,boundary,duration) {
-  const before=cues[index], next=cues[index+1];
-  const end=Math.min(cues[index+2]?.start ?? duration,duration);
+  const before=cues[index], next=cues[index+1], nextNext=cues[index+2];
+  const end=Math.min(nextNext?.start ?? duration,duration);
   if (!before || !next || !Number.isFinite(boundary) || boundary<=before.words.at(-1).start ||
       boundary>=end || (next.words[0].confirmed && boundary!==next.words[0].start) ||
       next.words.slice(1).some(w=>w.start<boundary && w.confirmed))
