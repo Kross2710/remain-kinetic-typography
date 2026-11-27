@@ -23,9 +23,11 @@ Render animation kinetic-typography (chữ + nền video + nhạc) ra **MP4 1080
    node capture.mjs 16:9 --q 720 --fps 30 --seconds 12   # thử nhanh nghiệm thu (~12s đầu)
    node capture.mjs both                                  # final 1080p60 cả hai tỉ lệ
    ```
-   Cờ: `--q 1080|720` (cạnh ngắn) · `--fps 30|60` · `--seconds N` (giới hạn để test) · `--hw` (encode bằng GPU của máy đang chạy).
+   Cờ: `--q 1080|720` (cạnh ngắn) · `--fps 30|60` · `--seconds N` (giới hạn để test) · `--hw` (encode bằng GPU của máy đang chạy) · `--gpu` (Chrome **vẽ** bằng iGPU).
    `--hw` **tự chọn encoder theo thiết bị**: macOS → `h264_videotoolbox` · Linux/Intel-AMD (có `/dev/dri/renderD128`) → `h264_vaapi` · NVIDIA → `h264_nvenc`. Ghi đè: `HW_ENCODER=vaapi|videotoolbox|nvenc|x264`, `VAAPI_DEVICE=/dev/dri/renderD128`.
-   **Render đa lõi** (chia timeline thành khúc, chạy song song theo số lõi, ghép lại): `node render-fast.mjs both --hw` (worker = số lõi; macOS đếm P-core, Linux đếm lõi qua `lscpu`).
+   `--gpu` bật `--use-gl=angle --use-angle=vulkan` (ANGLE → Mesa/Intel, trên N100 là `Intel(R) Graphics (ADL-N)`) **kèm `--disable-accelerated-video-decode`**. Bắt buộc phải tắt decode video bằng GPU: nếu để iGPU decode `<video>` nền, screenshot trả về khung **đen** (đo: YAVG 20 thay vì 50). Đo trên N100 (16:9 720p30, 180 khung hình, encode `--hw` như nhau): SwiftShader 72.2/73.8s = 2.5–2.6 fps → iGPU 52.8/54.5s = **3.4–3.5 fps** (+31%), PSNR so với bản SwiftShader 47 dB (gần như giống hẳn, khác chỉ ở antialias chữ).
+   Ghi đè backend GL bằng `CHROME_EXTRA_ARGS="--use-angle=gl-egl"` (OpenGL ES 3.2, cũng 3.4 fps). Mặc định **không** bật `--gpu` — vẫn SwiftShader để giữ đúng chất lượng chữ.
+   **Render đa lõi** (chia timeline thành khúc, chạy song song theo số lõi, ghép lại): `node render-fast.mjs both --hw --gpu` (worker = số lõi; macOS đếm P-core, Linux đếm lõi qua `lscpu`).
 
 Kết quả ở `out/remain_16x9_1080p60.mp4`, `out/remain_9x16_1080p60.mp4`.
 

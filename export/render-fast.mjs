@@ -44,6 +44,7 @@ if (!Number.isFinite(parseInt(Q, 10)) || !Number.isFinite(FPS)) {
   process.exit(1);
 }
 const HW = argv.includes('--hw');                    // encode khúc bằng GPU của máy đang chạy (VideoToolbox/VAAPI/NVENC — capture.mjs tự chọn)
+const GPU = argv.includes('--gpu');                  // mỗi worker vẽ bằng iGPU (chuyển thẳng sang capture.mjs)
 const VB = flag('vb', null);
 const AUDIO = resolve(flag('audio', resolve(PROJECT, 'assets/audio/clip.mp3')));
 const aspects = aspectArg === 'both' ? ['16:9', '9:16'] : [aspectArg];
@@ -88,6 +89,7 @@ async function pool(tasks, limit) {           // chạy tối đa `limit` task s
       plan[aspect].push(segPath);
       const extra = [];
       if (HW) extra.push('--hw');
+      if (GPU) extra.push('--gpu');
       if (VB) extra.push('--vb', String(VB));
       jobs.push(() => run('node', [CAP, aspect, '--q', String(Q), '--fps', String(FPS), '--warm', String(WARM),
         '--fromframe', String(from), '--toframe', String(to), '--segout', segPath, '--audio', AUDIO, ...extra]));

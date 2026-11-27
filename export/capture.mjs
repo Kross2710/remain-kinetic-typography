@@ -59,6 +59,9 @@ const TOFRAME = has('toframe') ? parseInt(flag('toframe'), 10) : null;
 const WARM = parseFloat(flag('warm', '3')) || 0;
 const SEGOUT = flag('segout', null);
 const HW = has('hw');                                  // encode bằng GPU của máy đang chạy (macOS: VideoToolbox · Linux/Intel-AMD: VAAPI · NVIDIA: NVENC)
+// --gpu: Chrome VẼ bằng iGPU (ANGLE -> Vulkan/Mesa). Bắt buộc tắt decode video bằng GPU: nếu để
+// iGPU decode <video> nền, screenshot trả về khung đen (đo: YAVG 20 thay vì 50). N100: 2.6 -> 3.4 fps.
+const GPU = has('gpu');
 const VBITRATE = flag('vb', Q >= 1080 ? '16M' : '8M'); // encoder GPU dùng bitrate mục tiêu (không có CRF)
 
 // Chọn encoder HW theo thiết bị. Override: HW_ENCODER=vaapi|videotoolbox|nvenc|x264 · VAAPI_DEVICE=/dev/dri/renderD128
@@ -217,7 +220,7 @@ async function renderAspect(browser, cfg, total) {
   const server = await startServer(PROJECT);
   URL_BASE = `http://127.0.0.1:${server.address().port}/`;
   console.log(`serving (Range) ${URL_BASE}  audio=${AUDIO}  total=${total}f`);
-  console.log(`chrome=${findChrome()}  encode=${HW ? ENCODER.kind + (ENCODER.device ? `(${ENCODER.device})` : '') : 'libx264 (CPU)'}  bg=${cfgFor(aspects[0]).videoSrc}`);
+  console.log(`chrome=${findChrome()}  render=${GPU ? 'iGPU (ANGLE Vulkan)' : 'SwiftShader (CPU)'}  encode=${HW ? ENCODER.kind + (ENCODER.device ? `(${ENCODER.device})` : '') : 'libx264 (CPU)'}  bg=${cfgFor(aspects[0]).videoSrc}`);
 
   const chromeArgs = [
     '--autoplay-policy=no-user-gesture-required', '--force-color-profile=srgb', '--hide-scrollbars',
@@ -225,6 +228,9 @@ async function renderAspect(browser, cfg, total) {
     '--disable-background-timer-throttling', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--no-first-run',
   ];
   if (process.platform === 'linux') chromeArgs.push('--disable-dev-shm-usage');   // /dev/shm nhỏ (RAM 7.5GB)
+  if (GPU) chromeArgs.push('--use-gl=angle', '--use-angle=vulkan', '--disable-accelerated-video-decode');
+  // CHROME_EXTRA_ARGS="--use-angle=gl-egl" -> thử backend GL khác mà không phải sửa code.
+  if (process.env.CHROME_EXTRA_ARGS) chromeArgs.push(...process.env.CHROME_EXTRA_ARGS.split(/\s+/).filter(Boolean));
   const browser = await puppeteer.launch({
     executablePath: findChrome(), headless: true, protocolTimeout: 1_200_000, defaultViewport: null,
     args: chromeArgs,
