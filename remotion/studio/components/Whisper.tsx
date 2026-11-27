@@ -29,7 +29,7 @@ export function WhisperLine({cue,effect,time,scale,hasVideo,past=false,shared}: 
   const elapsed=time-cue.start;
   const size=scale*.085*(cue.text.length>60?.82:1)*effect.size;
   const replacesEntry=Boolean(shared?.entry || shared?.ink);
-  const glyphs=cue.hook&&!replacesEntry ? cue.words.map(word=>whisperGraphemes(word.text)) : null;
+  const glyphs=cue.hook&&!shared?.ink ? cue.words.map(word=>whisperGraphemes(word.text)) : null;
   const count=glyphs?.reduce((total,word)=>total+word.length,0) ?? 0;
   const gap=count>1?Math.min(.042,.48/(count-1)):0;
   const stagger=cue.words.length>1?Math.min(effect.stagger,.4/(cue.words.length-1)):0;
@@ -47,7 +47,7 @@ export function WhisperLine({cue,effect,time,scale,hasVideo,past=false,shared}: 
       const light=attack*release;
       const entry=whisperEase((elapsed-i*stagger)/effect.entry);
       const stock=glyphs?.[i].map(glyph=>({glyph,progress:whisperEase((elapsed-index++*gap)/effect.entry)}));
-      return <span key={i} style={{display:'inline-block',maxWidth:'100%',padding:'0 .115em',verticalAlign:'bottom',overflow:glyphs||shared?.ink?undefined:'hidden'}}>
+      return <span key={i} style={{display:'inline-block',maxWidth:'100%',padding:'0 .115em',verticalAlign:'bottom',overflow:shared?.ink || (glyphs && !shared?.entry)?undefined:'hidden'}}>
         <span data-word-active={!past&&i===current} data-word-emphasis={emphasized||undefined}
           style={{display:'inline-block',color:interpolateColors(light,[0,1],[effect.color,effect.accent]),opacity:(shared?.wipe?1:(.62+.38*light))*(glyphs||replacesEntry?1:entry),transform:shared?.entry?`translateY(${shared.rise(i)}%)`:glyphs||shared?.ink?undefined:`translateY(${(1-entry)*55}%)`,fontWeight:emphasized?700:undefined}}>
           {shared?.glyphs(i,stock?.map(g=>g.progress)) ?? stock?.map(({glyph,progress},j)=><span key={j} data-whisper-letter style={{display:'inline-block',opacity:progress,filter:progress<1?`blur(${(1-progress)*3}px)`:undefined}}>{glyph}</span>) ?? word.text}

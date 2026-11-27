@@ -52,7 +52,7 @@ export function Scene({project,audioSrc,videoSrc}:SceneProps) {
   const [line]=activeAt(project.cues,t);
   const cue=project.cues[line];
   const effect=cue?.effect ?? project.effect ?? PRESETS.classic;
-  const whisper=effect.preset==='whisper';
+  const whisper=project.effect?.preset==='whisper';
   const scale=Math.min(width,height);
   const flow=project.effect?.motion?.flow===true;
   const stack=!flow&&whisper&&cue?whisperStack(project.cues,line,frame,fps):[];
@@ -71,7 +71,7 @@ export function Scene({project,audioSrc,videoSrc}:SceneProps) {
       : <LyricLine key={target.start} cue={target} project={project} time={time} sizeBase={sizeBase} hasVideo={hasVideo} exit={exit} shared={shared}/>;
   }
   const outgoing: {index:number;lastTime:number;motion:number}[]=[];
-  if(!flow && cue && effect.preset==='aurora'){
+  if(!flow && !whisper && cue && effect.preset==='aurora'){
     // Continue the previous line's last rendered pose, not a new plain text line.
     const whisperHandoff=project.effect?.preset==='whisper' || project.cues.slice(Math.max(0,line-2),line).some(past=>past.effect?.preset==='whisper');
     for(let i=line-1;i>=0;i--){
