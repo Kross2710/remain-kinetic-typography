@@ -47,7 +47,7 @@ export function WhisperLine({cue,effect,time,scale,hasVideo,past=false,shared}: 
       const light=attack*release;
       const entry=whisperEase((elapsed-i*stagger)/effect.entry);
       const stock=glyphs?.[i].map(glyph=>({glyph,progress:whisperEase((elapsed-index++*gap)/effect.entry)}));
-      return <span key={i} style={{display:'inline-block',maxWidth:'100%',padding:'0 .115em',verticalAlign:'bottom',overflow:glyphs||shared?.ink?undefined:'hidden'}}>
+      return <span key={i} style={{display:'inline-block',maxWidth:'100%',padding:'0 .115em',verticalAlign:'bottom',overflow:shared?.ink || (glyphs && !shared?.entry)?undefined:'hidden'}}>
         <span data-word-active={!past&&i===current} data-word-emphasis={emphasized||undefined}
           style={{display:'inline-block',color:interpolateColors(light,[0,1],[effect.color,effect.accent]),opacity:(shared?.wipe?1:(.62+.38*light))*(glyphs||replacesEntry?1:entry),transform:shared?.entry?`translateY(${shared.rise(i)}%)`:glyphs||shared?.ink?undefined:`translateY(${(1-entry)*55}%)`,fontWeight:emphasized?700:undefined}}>
           {shared?.glyphs(i,stock?.map(g=>g.progress)) ?? stock?.map(({glyph,progress},j)=><span key={j} data-whisper-letter style={{display:'inline-block',opacity:progress,filter:progress<1?`blur(${(1-progress)*3}px)`:undefined}}>{glyph}</span>) ?? word.text}

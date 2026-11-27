@@ -42,6 +42,8 @@ try{
   assert.equal(await active.getAttribute('data-shared-entry'),'true');
   const letters=active.locator('[data-whisper-letter]');
   assert.ok(await letters.count()>1,'Whisper hook must still render per-character soak with shared enter and ink off');
+  assert.equal(await letters.first().evaluate(el=>getComputedStyle(el.parentElement.parentElement).overflow),'hidden',
+    'Shared enter must keep the per-word clip mask while hook letters soak in');
   const opacity=await letters.evaluateAll(nodes=>nodes.map(el=>Number(el.style.opacity)));
   assert.ok(opacity.some(value=>value<1) && opacity.some(value=>value>0),`Hook letters must soak in: ${opacity}`);
 
