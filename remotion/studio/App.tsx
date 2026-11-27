@@ -60,6 +60,9 @@ export default function Studio() {
   const [notice,setNotice]=useState('');
   const [error,setError]=useState('');
   const [renderMode,setRenderMode]=useState<'all'|'range'>('all');
+  // Off by default: the CPU render is the reference output. The server only reads
+  // this as a boolean flag and turns it into Remotion's chromiumOptions.gl.
+  const [gpuExport,setGpuExport]=useState(false);
   const [rangeStart,setRangeStart]=useState('0');
   const [rangeEnd,setRangeEnd]=useState<string|null>(null);
   const [view,setView]=useState<View>(()=>createView(DEMO_SECONDS,0));
@@ -359,6 +362,7 @@ export default function Studio() {
       const data=new FormData();data.set('project',JSON.stringify(validateProject({...project,renderRange})));
       if(audio)data.set('audio',audio.file);
       if(video)data.set('video',video.file);
+      if(gpuExport)data.set('gpu','1');
       const started=await fetch('/api/render',{method:'POST',body:data,signal:upload.signal});
       if(!started.ok){const body=await started.json().catch(()=>({}));throw Error(body.error || `Không gửi được project (HTTP ${started.status}).`);}
       const {jobId}=await started.json();
@@ -645,6 +649,7 @@ export default function Studio() {
           <div><label>Kết thúc (giây)<Input className="w-[105px]" type="number" min="0" max={duration} step="any" value={endInput} onChange={e=>setRangeEnd(e.target.value)}/></label><Button type="button" variant="outline" onClick={()=>setRangeEnd(time.toFixed(3))}>Lấy mốc cuối</Button></div>
         </>}
       </div>
+      <label className="flex min-h-[44px] items-center gap-2 text-sm"><input className="size-4" type="checkbox" checked={gpuExport} onChange={e=>setGpuExport(e.target.checked)}/><span>Vẽ khung hình bằng iGPU</span><span className="opacity-70">Nhanh hơn trên card tích hợp; chữ có thể khác nhẹ về antialias.</span></label>
       {rangeError && <p className="error" role="status">{rangeError}</p>}
     </section>
     <footer><span>Render bằng máy đang chạy Studio · MP4 / H.264</span><div role={error?'alert':'status'} className={error?'error':''}>{error || (busy?'Đang render trên máy. Render vẫn chạy nếu bạn reload trang.':notice)}</div></footer>

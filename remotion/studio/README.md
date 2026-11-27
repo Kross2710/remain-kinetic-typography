@@ -56,6 +56,15 @@ Nếu UFW trên host chặn kết nối, thêm rule giới hạn đúng subnet v
 sudo ufw allow from 192.168.1.0/24 to 192.168.1.215 port 4317 proto tcp
 ```
 
+## Xuất bằng iGPU (tùy chọn)
+
+Trong mục "Thiết lập xuất" có checkbox "Vẽ khung hình bằng iGPU". Mặc định **tắt**. Khi bật, upload gửi thêm field `gpu=1`, server truyền xuống render worker và worker đặt `chromiumOptions: {gl: 'vulkan'}` cho Remotion.
+
+- Chỉ bật được phần **vẽ khung hình**. Remotion 4.0.484 không có bộ mã hoá VAAPI (hỗ trợ chỉ VideoToolbox trên macOS và NVENC trên NVIDIA), nên trên Intel N100 phần mã hoá vẫn là `libx264`.
+- Đo trên N100, 90 khung 1280x720, có video nền thật: 3.84 fps -> 4.59 fps (+19%), PSNR 46.8 dB so với bản CPU. Clip chỉ có chữ, không video nền: 9.36 -> 9.61 fps, PSNR 53.4 dB.
+- `gl: 'angle-egl'` cho ra file giống hệt từng byte nên không dùng.
+- Pipeline xuất CLI (`export/`) có cờ riêng: `npm run both:gpu` / `npm run fast:gpu` (xem `export/README.md`).
+
 ## Kiểm thử
 
 ```sh
@@ -64,4 +73,5 @@ npm run studio:check
 npm run studio:e2e
 npm run studio:e2e:workspace
 npm run studio:e2e:media
+npm run studio:gpu   # render thật 2 lần (CPU và iGPU) rồi so khung hình
 ```

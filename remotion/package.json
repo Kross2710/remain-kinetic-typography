@@ -16,6 +16,7 @@
     "studio:e2e": "node studio/test/e2e.mjs",
     "studio:e2e:workspace": "node studio/test/workspace-e2e.mjs",
     "studio:progress": "node studio/test/progress-live.mjs",
+    "studio:gpu": "node studio/test/gpu-live.mjs",
     "studio:progress:ui": "node studio/test/progress-ui.mjs",
     "studio:e2e:media": "node studio/test/media-e2e.mjs",
     "studio:e2e:session": "node studio/test/session-e2e.mjs",
