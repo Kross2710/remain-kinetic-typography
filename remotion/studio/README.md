@@ -65,10 +65,15 @@ Trong mục "Thiết lập xuất" có checkbox "Vẽ khung hình bằng iGPU". 
 - `gl: 'angle-egl'` cho ra file giống hệt từng byte nên không dùng.
 - Pipeline xuất CLI (`export/`) có cờ riêng: `npm run both:gpu` / `npm run fast:gpu` (xem `export/README.md`).
 
+## Timeline
+
+Thước thời gian và ba làn Video, Nhạc, Lời cuộn ngang cùng nhau. Bấm hoặc kéo trên thước để tua theo khung hình; bấm nền một làn để tua, hoặc bấm đoạn lời để chọn dòng canh từ. Dùng Tab đến thanh vị trí rồi dùng phím mũi tên để tua bằng bàn phím. Khi khung timeline có focus, dùng Home/End để tới đoạn lời đầu/cuối, kể cả khi không có đoạn nào trong vùng nhìn. Trên một đoạn lời, dùng ←/→ để chuyển đoạn; Enter chọn và tua đến đoạn đó. Ctrl/⌘ + cuộn phóng quanh con trỏ, còn **Vừa khung** đưa timeline về đầu và thu vừa khung nếu giới hạn zoom cho phép.
+
 ## Kiểm thử
 
 ```sh
 npm run studio:check
+npm run studio:e2e:timeline
 # Chạy server như trên ở terminal khác; kiểm thử E2E cần ffmpeg và ffprobe trong PATH.
 npm run studio:e2e
 npm run studio:e2e:workspace

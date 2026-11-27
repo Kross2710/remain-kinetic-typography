@@ -41,6 +41,10 @@ try {
   await page.locator('.stage video').waitFor();
   assert.equal(await page.locator('.stage video').evaluate(el=>el.muted),true,'External audio replaces the video soundtrack');
   assert.equal(await slider.getAttribute('max'),'959');
+  const videoClip=page.locator('.video-track').getByText('background.mp4',{exact:true});
+  const audioClip=page.locator('.audio-track').getByText('long-track.mp3',{exact:true});
+  assert.ok(Math.abs((await videoClip.boundingBox()).width / (await audioClip.boundingBox()).width - 6/32) < .005,
+    'The media blocks share a second scale and end with their source files');
   await openTab('Lời');
   await page.locator('#lyrics').fill('[00:03.00]Cảnh màu xanh\n[00:05.00]Câu tiếp theo\n[00:31.00]Sau ba mươi giây');
   await page.getByRole('button',{name:'Áp dụng lời'}).click();

@@ -14,6 +14,7 @@
     "studio": "node studio/server.mjs",
     "studio:check": "tsc --noEmit && node --test studio/test/*.test.mjs",
     "studio:e2e": "node studio/test/e2e.mjs",
+    "studio:e2e:timeline": "node studio/test/timeline-e2e.mjs",
     "studio:e2e:workspace": "node studio/test/workspace-e2e.mjs",
     "studio:progress": "node studio/test/progress-live.mjs",
     "studio:gpu": "node studio/test/gpu-live.mjs",

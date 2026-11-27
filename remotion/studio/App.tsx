@@ -8,8 +8,9 @@ import {Textarea} from '@/components/ui/textarea';
 import {Tabs,TabsContent,TabsList,TabsTrigger} from '@/components/ui/tabs';
 import {LyricSyncPanel} from '@/components/LyricSyncPanel';
 import {EffectsPanel} from '@/components/EffectsPanel';
+import {TimelineTracks} from '@/components/TimelineTracks';
 import {MAX_SECTIONS,PRESETS,type Effect,type SectionKind,type SongSection} from './effects.mjs';
-import {canRedo,canUndo,clampView,contentWidth,createEditor,createView,cuesToLrc,editorReducer,fitPxPerSec,MAX_PROJECT_FILE_BYTES,parseProjectFile,serializeProject,timeToX,xToTime,zoomView,type View} from './editor.mjs';
+import {canRedo,canUndo,clampView,contentWidth,createEditor,createView,cuesToLrc,editorReducer,MAX_PROJECT_FILE_BYTES,parseProjectFile,serializeProject,xToTime,zoomView,type View} from './editor.mjs';
 import {buildSessionRecord,clearSession,forgetJobId,loadSession,openStudioDb,QUOTA_NOTICE,readJobId,rememberJobId,saveSession,storedLengthFrames,type SessionSnapshot} from './session.mjs';
 
 const sample='[00:00.00]Một nhịp thở\n[00:05.00]Rồi chữ bắt đầu chuyển động\n[00:12.00]Mỗi từ theo một nhịp\n[00:22.00]Đến lượt bạn kể chuyện';
@@ -67,8 +68,9 @@ export default function Studio() {
   const [rangeEnd,setRangeEnd]=useState<string|null>(null);
   const [view,setView]=useState<View>(()=>createView(DEMO_SECONDS,0));
   const timelineSection=useRef<HTMLElement>(null);
-  const videoTrack=useRef<HTMLDivElement>(null);
-  const lyricTrack=useRef<HTMLDivElement>(null);
+  const timelineViewport=useRef<HTMLDivElement>(null);
+  const [timelineWidth,setTimelineWidth]=useState(0);
+  const timelineFitted=useRef(true);
   const length=timelineLength(audio?.seconds ?? null,video?.seconds ?? null);
   const videoLength=video ? timelineLength(null,video.seconds) : undefined;
   const duration=length/FPS;
@@ -90,30 +92,51 @@ export default function Studio() {
   const canTap=Boolean(targetWord);
   const canReplay=Boolean(cue && cue.start<duration);
 
-  // One view object owns the timeline scale, so the Video and Lời tracks scroll
-  // as a single timeline: whichever one scrolls publishes scrollX, and the
-  // others follow. The browser clamps scrollLeft; the helpers clamp the scale.
-  const trackWidth=()=>lyricTrack.current?.clientWidth ?? 0;
-  const fitTimeline=useEffectEvent(()=>{
-    const viewportWidth=trackWidth();
-    // A restored session keeps the zoom it had; fitting only starts after that.
-    if (restoredView.current) {
-      const saved=restoredView.current;
-      restoredView.current=null;
-      setView(clampView(saved,{duration,viewportWidth}));
-      return;
-    }
-    setView(current=>clampView({pxPerSec:fitPxPerSec(duration,viewportWidth),scrollX:current.scrollX},{duration,viewportWidth}));
+  const trackWidth=()=>timelineViewport.current?.clientWidth ?? 0;
+  const fitTimeline=()=>{
+    timelineFitted.current=true;
+    setView(createView(duration,trackWidth()));
+  };
+  const applyTimelineView=useEffectEvent(()=>{
+    const saved=restoredView.current;
+    restoredView.current=null;
+    if (saved) {
+      timelineFitted.current=false;
+      setView(clampView(saved,{duration,viewportWidth:trackWidth()}));
+    } else fitTimeline();
   });
-  const zoomTimeline=useEffectEvent((factor:number,anchorTime?:number)=>{
+  const zoomTimeline=(factor:number,anchorTime?:number)=>{
+    timelineFitted.current=false;
     const viewportWidth=trackWidth();
     setView(current=>zoomView(current,{factor,duration,viewportWidth,anchorTime:anchorTime ?? time}));
+  };
+  const scrollTimeline=(scrollX:number)=>setView(current=>current.scrollX===scrollX?current:{...current,scrollX});
+  const resizeTimeline=useEffectEvent((width:number)=>{
+    setTimelineWidth(width);
+    if (timelineFitted.current) setView(createView(duration,width));
   });
-  const scrollTimeline=useEffectEvent((scrollX:number)=>setView(current=>current.scrollX===scrollX?current:{...current,scrollX}));
-  useLayoutEffect(()=>{fitTimeline();},[duration,sessionApplied]);
-  useEffect(()=>{
-    for (const track of [videoTrack.current,lyricTrack.current]) if (track && track.scrollLeft!==view.scrollX) track.scrollLeft=view.scrollX;
-  },[view.scrollX]);
+  useLayoutEffect(()=>{
+    const el=timelineViewport.current;
+    if (!el) return;
+    let width=el.clientWidth;
+    setTimelineWidth(width);
+    const observe=new ResizeObserver(()=>{
+      if (el.clientWidth===width) return;
+      width=el.clientWidth;
+      resizeTimeline(width);
+    });
+    observe.observe(el);
+    return ()=>observe.disconnect();
+  },[]);
+  useLayoutEffect(()=>{applyTimelineView();},[duration,sessionApplied]);
+  const stripWidth=contentWidth(duration,view);
+  useLayoutEffect(()=>{
+    const el=timelineViewport.current;
+    if (!el) return;
+    if (Math.abs(el.scrollLeft-view.scrollX)>=0.5) el.scrollLeft=view.scrollX;
+    const scrollX=el.scrollLeft;
+    setView(current=>current.scrollX===scrollX?current:{...current,scrollX});
+  },[view.scrollX,stripWidth,timelineWidth]);
   useEffect(()=>{
     // Undoing an edit that removed lines must not leave the panel pointing past
     // the end of the lyrics.
@@ -456,6 +479,7 @@ export default function Studio() {
     setRenderMode('all');setRangeStart('0');setRangeEnd(null);
     removeMedia('audio');removeMedia('video');
     restoredView.current=null;
+    timelineFitted.current=true;
     setView(createView(DEMO_SECONDS,trackWidth()));
     sessionRestoring.current=false;
     setError('');setNotice('Đã bắt đầu lại với project mẫu.');
@@ -497,8 +521,10 @@ export default function Studio() {
   const zoomFromWheel = useEffectEvent((e: WheelEvent) => {
     if (!e.ctrlKey && !e.metaKey) return;
     e.preventDefault();
-    const rect = lyricTrack.current?.getBoundingClientRect();
-    zoomTimeline(e.deltaY < 0 ? 1.2 : 1 / 1.2, rect ? xToTime(view.scrollX + (e.clientX - rect.left), view) : time);
+    const el=timelineViewport.current;
+    const rect=el?.getBoundingClientRect();
+    const pointed=el && rect && e.clientX>=rect.left && e.clientX<=rect.right && e.clientY>=rect.top && e.clientY<=rect.bottom;
+    zoomTimeline(e.deltaY < 0 ? 1.2 : 1 / 1.2, pointed ? xToTime(el.scrollLeft+e.clientX-rect.left,view) : time);
   });
   useEffect(() => {
     // The focused word button may disappear when the next line is shorter.
@@ -620,23 +646,10 @@ export default function Studio() {
         <Button type="button" variant="outline" size="sm" onClick={()=>zoomTimeline(1.4)} aria-label="Phóng to timeline" title="Phóng to (+)">+</Button>
         <Button type="button" variant="outline" size="sm" onClick={()=>fitTimeline()} title="Vừa khung (F)">Vừa khung</Button>
         <span className="subtle">{seconds(time)} / {seconds(duration)} · {FPS} fps</span></div></div>
-      <div className="lane"><span>Playhead</span><input id="timeline" aria-label="Vị trí timeline" type="range" min={0} max={length-1} step={1} value={frame} onChange={e=>seek(Number(e.target.value))}/></div>
-      <div className="lane"><span>Video</span><div ref={videoTrack} className="track video-track scrollable" onScroll={e=>scrollTimeline(e.currentTarget.scrollLeft)}><div className="track-strip" style={{width:`${contentWidth(duration,view)}px`}}>{video && <span style={{width:`${timeToX((videoLength ?? 0)/FPS,view)}px`}}>{video.file.name}</span>}</div></div></div>
-      <div className="lane"><span>Nhạc</span><div className={'audio-lane '+(audio?'loaded':'')}>{audio?audio.file.name:'Chưa có nhạc'}</div></div>
-        <div className="lane"><span>Lời</span><div ref={lyricTrack} className="track lyric-track scrollable" onScroll={e=>scrollTimeline(e.currentTarget.scrollLeft)}>
-          <div className="track-strip" style={{width:`${contentWidth(duration,view)}px`}}>
-            {visibleCues.map((c,i)=>{
-              const complete=c.words.every(w=>w.confirmed);
-              const selected=!following && line===i && selection!==null;
-              const status=complete?' · Đã canh xong':'';
-              return <button type="button" key={i} className={i===liveLine?'live':''} data-complete={complete || undefined} data-selected={selected || undefined}
-                aria-current={i===liveLine?'time':undefined} title={`${c.text} · ${seconds(c.start)}${status}`}
-                aria-label={`Tua đến dòng ${i+1}: ${c.text}${status}${selected?' · Đang chọn':''}`} onClick={()=>pickTimelineCue(i)}
-                style={{left:`${timeToX(c.start,view)}px`,width:`${Math.max(28,timeToX((visibleCues[i+1]?.start??duration)-c.start,view))}px`}}>
-                {complete && <span className="cue-check" aria-hidden="true">✓ </span>}{c.text}
-              </button>;
-            })}
-          </div></div></div>
+      <TimelineTracks viewport={timelineViewport} viewportWidth={timelineWidth} view={view} length={length} frame={frame}
+        cues={visibleCues} liveLine={liveLine} selectedLine={!following && selection ? line : null}
+        video={video && {name:video.file.name,seconds:(videoLength ?? 0)/FPS}} audio={audio && {name:audio.file.name,seconds:audio.seconds}}
+        onScroll={scrollTimeline} onSeek={seek} onPickCue={pickTimelineCue}/>
       </section>
     </main>
     <section className="export-options" aria-label="Thiết lập xuất video">

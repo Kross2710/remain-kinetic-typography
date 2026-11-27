@@ -42,21 +42,29 @@ try {
   const slider = page.getByRole('slider', {name: 'Vị trí timeline'});
   const exportButton = page.getByRole('button', {name: 'Xuất MP4', exact: true});
   const cancelButton = page.getByRole('button', {name: 'Huỷ render', exact: true});
-  const stripWidth = () => page.locator('.lyric-track .track-strip').evaluate(el => el.getBoundingClientRect().width);
+  const stripWidth = () => page.locator('.timeline-viewport .track-strip').evaluate(el => el.getBoundingClientRect().width);
   const footer = () => page.locator('footer div[role="status"], footer div[role="alert"]').innerText();
 
   await page.goto(base);
   await exportButton.waitFor();
 
-  // ---- 1. zoom survives a reload that does not change the timeline length ---
+  // ---- 1. zoom and pan survive a reload that does not change the timeline length ---
   const fitted = await stripWidth();
   await page.keyboard.press('=');
   await page.keyboard.press('=');
   const zoomed = await stripWidth();
   assert.ok(zoomed > fitted, `zooming in must widen the lane, ${fitted} -> ${zoomed}`);
+  const viewport = page.locator('.timeline-viewport');
+  const panned = await viewport.evaluate(el => {
+    el.scrollLeft = 200;
+    return el.scrollLeft;
+  });
+  assert.ok(panned > 0);
   await page.waitForTimeout(900);
+  await page.evaluate(() => window.dispatchEvent(new Event('pagehide')));
   await page.reload();
   await exportButton.waitFor();
+  await page.waitForFunction(x => document.querySelector('.timeline-viewport').scrollLeft === x, panned);
   const restored = await stripWidth();
   assert.equal(restored, zoomed, 'a same-length reload must keep the saved zoom, not re-fit it');
   await page.getByRole('button', {name: 'Vừa khung', exact: true}).click();
