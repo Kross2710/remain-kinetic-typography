@@ -18,6 +18,7 @@
     "studio:progress": "node studio/test/progress-live.mjs",
     "studio:progress:ui": "node studio/test/progress-ui.mjs",
     "studio:e2e:media": "node studio/test/media-e2e.mjs",
+    "studio:e2e:session": "node studio/test/session-e2e.mjs",
     "studio:dev": "node studio/server.mjs --dev"
   },
   "dependencies": {
@@ -45,6 +46,7 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "5.2.0",
+    "fake-indexeddb": "^6.2.8",
     "playwright-core": "1.65.1",
     "tailwindcss": "4.3.5",
     "typescript": "^5.5.0",

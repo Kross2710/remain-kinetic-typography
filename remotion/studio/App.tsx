@@ -10,6 +10,7 @@ import {LyricSyncPanel} from '@/components/LyricSyncPanel';
 import {EffectsPanel} from '@/components/EffectsPanel';
 import {MAX_SECTIONS,PRESETS,type Effect,type SectionKind,type SongSection} from './effects.mjs';
 import {canRedo,canUndo,clampView,contentWidth,createEditor,createView,cuesToLrc,editorReducer,fitPxPerSec,MAX_PROJECT_FILE_BYTES,parseProjectFile,serializeProject,timeToX,xToTime,zoomView,type View} from './editor.mjs';
+import {buildSessionRecord,clearSession,forgetJobId,loadSession,openStudioDb,QUOTA_NOTICE,readJobId,rememberJobId,saveSession,storedLengthFrames,type SessionSnapshot} from './session.mjs';
 
 const sample='[00:00.00]Một nhịp thở\n[00:05.00]Rồi chữ bắt đầu chuyển động\n[00:12.00]Mỗi từ theo một nhịp\n[00:22.00]Đến lượt bạn kể chuyện';
 const demoCues=importLyrics(sample,DEMO_SECONDS);
@@ -28,6 +29,8 @@ export default function Studio() {
   const tapPanel=useRef<HTMLElement>(null);
   const uploadSeq=useRef({audio:0,video:0});
   const mediaUrls=useRef<Partial<Record<MediaKind,string>>>({});
+  const mediaState=useRef<{audio:LocalMedia|null; video:LocalMedia|null}>({audio:null,video:null});
+  const sessionRestoring=useRef(false);
   const [audio,setAudio]=useState<LocalMedia|null>(null);
   const [video,setVideo]=useState<LocalMedia|null>(null);
   const [wide,setWide]=useState(false);
@@ -45,6 +48,11 @@ export default function Studio() {
   const [busy,setBusy]=useState(false);
   const [renderJob,setRenderJob]=useState<RenderJob|null>(null);
   const activeJobId=useRef<string|null>(null);
+  const sessionDb=useRef<IDBDatabase|null>(null);
+  const restoredView=useRef<View|null>(null);
+  const autosaveTimer=useRef(0);
+  const [sessionSavedAt,setSessionSavedAt]=useState<number|null>(null);
+  const [sessionQuota,setSessionQuota]=useState(false);
   const [notice,setNotice]=useState('');
   const [error,setError]=useState('');
   const [renderMode,setRenderMode]=useState<'all'|'range'>('all');
@@ -81,6 +89,13 @@ export default function Studio() {
   const trackWidth=()=>lyricTrack.current?.clientWidth ?? 0;
   const fitTimeline=useEffectEvent(()=>{
     const viewportWidth=trackWidth();
+    // A restored session keeps the zoom it had; fitting only starts after that.
+    if (restoredView.current) {
+      const saved=restoredView.current;
+      restoredView.current=null;
+      setView(clampView(saved,{duration,viewportWidth}));
+      return;
+    }
     setView(current=>clampView({pxPerSec:fitPxPerSec(duration,viewportWidth),scrollX:current.scrollX},{duration,viewportWidth}));
   });
   const zoomTimeline=useEffectEvent((factor:number,anchorTime?:number)=>{
@@ -140,7 +155,11 @@ export default function Studio() {
   function setLocalMedia(kind:MediaKind,media:LocalMedia|null) {
     const previous=mediaUrls.current[kind];
     mediaUrls.current[kind]=media?.src;
+    mediaState.current[kind]=media;
     if(kind==='audio')setAudio(media);else setVideo(media);
+    // Picking or removing a file is worth saving at once: the blob is the part
+    // a reload cannot recover on its own.
+    void persistSession({withMedia:true});
     // Fast Refresh reruns effect cleanup without clearing editor state.
     // Revoke when replacing/removing a file instead; document unload frees the rest.
     if(previous) window.setTimeout(()=>URL.revokeObjectURL(previous),0);
@@ -268,10 +287,7 @@ export default function Studio() {
   function saveProject() {
     setError('');setNotice('');
     try {
-      const lastCue=cues[cues.length-1];
-      const lastWord=lastCue?.words[lastCue.words.length-1];
-      const storedLength=Math.min(MAX_SECONDS*FPS,Math.max(length,Math.ceil((lastWord?.start ?? 0)*FPS)+1));
-      const json=serializeProject({project:{...project,durationInFrames:storedLength,cues,sections},renderRange,media:{audio:audio?.file.name ?? null,video:video?.file.name ?? null}});
+      const json=serializeProject({project:{...project,durationInFrames:storedLengthFrames({length,cues}),cues,sections},renderRange,media:{audio:audio?.file.name ?? null,video:video?.file.name ?? null}});
       const url=URL.createObjectURL(new Blob([json],{type:'application/json'}));
       const a=document.createElement('a');a.href=url;a.download='remain-studio-project.json';a.click();
       window.setTimeout(()=>URL.revokeObjectURL(url),60000);
@@ -336,16 +352,86 @@ export default function Studio() {
       if(!started.ok){const body=await started.json().catch(()=>({}));throw Error(body.error || `Không gửi được project (HTTP ${started.status}).`);}
       const {jobId}=await started.json();
       activeJobId.current=jobId;
+      // The id is the only handle to a render that outlives this page.
+      rememberJobId(jobId);
       const finished=await watchRenderJob(jobId);
       if(finished.status==='cancelled'){setNotice('Đã huỷ render.');return;}
       if(finished.status!=='done')throw Error(finished.error || 'Không xuất được video.');
-      const file=await fetch(`/api/render/jobs/${jobId}/file`);
-      if(!file.ok)throw Error('Không tải được video đã render.');
-      const url=URL.createObjectURL(await file.blob());
-      const a=document.createElement('a');a.href=url;a.download=renderRange?'remain-studio-segment.mp4':'remain-studio.mp4';a.click();
-      window.setTimeout(()=>URL.revokeObjectURL(url),60000);setNotice('Đã xuất MP4.');
+      await downloadJobFile(jobId);
+      setNotice('Đã xuất MP4.');
     } catch(e){setError(errText(e));}
-    finally {activeJobId.current=null;setRenderJob(null);setBusy(false);}
+    finally {activeJobId.current=null;forgetJobId();setRenderJob(null);setBusy(false);}
+  }
+
+  const downloadJobFile=useEffectEvent(async (id:string)=>{
+    const file=await fetch(`/api/render/jobs/${id}/file`,{cache:'no-store'});
+    if(!file.ok)throw Error('Không tải được video đã render.');
+    const url=URL.createObjectURL(await file.blob());
+    const a=document.createElement('a');a.href=url;a.download=renderRange?'remain-studio-segment.mp4':'remain-studio.mp4';a.click();
+    window.setTimeout(()=>URL.revokeObjectURL(url),60000);
+  });
+  // A render that was still running when the page went away is running on the
+  // server; the job id kept in sessionStorage is enough to pick the bar back up
+  // and take the video once it lands.
+  const resumeRenderJob=useEffectEvent(async (id:string)=>{
+    setBusy(true);
+    setRenderJob({phase:'prepare',progress:0,renderedFrames:null,totalFrames:null,etaSeconds:null});
+    try {
+      const finished=await watchRenderJob(id);
+      if(finished.status==='done'){await downloadJobFile(id);setNotice('Đã tải video của render đang chạy trước khi nạp lại trang.');}
+      else if(finished.status==='cancelled')setNotice('Render đã bị huỷ.');
+      else setError(finished.error || 'Render đã mất.');
+    } catch(e){setError(errText(e));}
+    finally {activeJobId.current=null;forgetJobId();setRenderJob(null);setBusy(false);}
+  });
+
+  const applySession=useEffectEvent((snapshot:SessionSnapshot)=>{
+    const loaded=parseProjectFile(snapshot.record.json);
+    edit({type:'reset',cues:loaded.cues});
+    setDraft(cuesToLrc(loaded.cues));
+    setWide(loaded.width===1280);
+    setEffect(loaded.effect ?? PRESETS.classic);
+    setSections(loaded.sections ?? []);
+    setShowSections(loaded.showSections===true);
+    if(loaded.renderRange){setRenderMode('range');setRangeStart(String(loaded.renderRange.startFrame/FPS));setRangeEnd(String(loaded.renderRange.endFrame/FPS));}
+    else {setRenderMode('all');setRangeStart('0');setRangeEnd(null);}
+    restoredView.current=snapshot.record.view;
+    for (const kind of ['audio','video'] as const) {
+      const entry=snapshot.media[kind];
+      if(!entry || !Number.isFinite(entry.seconds) || entry.seconds<1/FPS)continue;
+      setLocalMedia(kind,{file:new File([entry.blob],entry.name),src:URL.createObjectURL(entry.blob),seconds:entry.seconds});
+    }
+    resetPlayhead();setFollowing(true);
+  });
+
+  const persistSession=useEffectEvent(async ({withMedia=false}:{withMedia?:boolean})=>{
+    const db=sessionDb.current;
+    if(!db || sessionRestoring.current)return;
+    const {audio,video}=mediaState.current;
+    try {
+      const record=buildSessionRecord({project,cues,length,renderRange,media:{audio:audio?.file.name ?? null,video:video?.file.name ?? null},view,savedAt:Date.now()});
+      const outcome=await saveSession(db,{record,media:withMedia?{audio:audio?{name:audio.file.name,seconds:audio.seconds,blob:audio.file}:null,video:video?{name:video.file.name,seconds:video.seconds,blob:video.file}:null}:undefined});
+      setSessionSavedAt(outcome.record.savedAt);
+      setSessionQuota(outcome.quotaExceeded);
+    } catch {
+      // A failed autosave must never interrupt editing: the last good session stays.
+    }
+  });
+
+  function restartSession() {
+    const db=sessionDb.current;
+    if(db)void clearSession(db).catch(()=>{});
+    forgetJobId();
+    sessionRestoring.current=true;
+    setSessionSavedAt(null);setSessionQuota(false);
+    edit({type:'reset',cues:demoCues});
+    setDraft(sample);setWide(false);setEffect(PRESETS.classic);setSections([]);setShowSections(false);
+    setRenderMode('all');setRangeStart('0');setRangeEnd(null);
+    removeMedia('audio');removeMedia('video');
+    restoredView.current=null;
+    setView(createView(DEMO_SECONDS,trackWidth()));
+    sessionRestoring.current=false;
+    setError('');setNotice('Đã bắt đầu lại với project mẫu.');
   }
 
   const tapFromKeyboard = useEffectEvent((e: KeyboardEvent) => {
@@ -402,6 +488,44 @@ export default function Studio() {
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
+  useEffect(()=>{
+    // Restore before anything can be written, so a reload never overwrites the
+    // session it has not read yet.
+    let cancelled=false;
+    void (async()=>{
+      try {
+        const db=await openStudioDb();
+        if(cancelled)return;
+        sessionDb.current=db;
+        sessionRestoring.current=true;
+        const snapshot=await loadSession(db);
+        if(snapshot && !cancelled)applySession(snapshot);
+        sessionRestoring.current=false;
+        setSessionSavedAt(snapshot?.record.savedAt ?? null);
+        const jobId=readJobId();
+        if(jobId && !cancelled)void resumeRenderJob(jobId);
+      } catch {
+        sessionRestoring.current=false;
+        if(!cancelled)setError('Không đọc được project đã lưu trong trình duyệt.');
+      }
+    })();
+    return ()=>{cancelled=true;};
+  },[]);
+  useEffect(()=>{
+    window.clearTimeout(autosaveTimer.current);
+    autosaveTimer.current=window.setTimeout(()=>void persistSession({}),500);
+    return ()=>window.clearTimeout(autosaveTimer.current);
+  },[cues,effect,sections,showSections,wide,renderMode,rangeStart,rangeEnd,length]);
+  useEffect(()=>{
+    // Zoom and scroll are not worth a write per drag, but they should not be lost
+    // when the tab is closed or hidden.
+    const flush=()=>void persistSession({});
+    const onVisibility=()=>{if(document.visibilityState==='hidden')flush();};
+    window.addEventListener('pagehide',flush);
+    document.addEventListener('visibilitychange',onVisibility);
+    return ()=>{window.removeEventListener('pagehide',flush);document.removeEventListener('visibilitychange',onVisibility);};
+  },[]);
+
   return <div className="studio">
     <header className="topbar">
       <div className="identity"><span className="mark" aria-hidden="true">R</span><div><h1>Remain Studio</h1><span>VIDEO CHỮ CHUYỂN ĐỘNG</span></div></div>
@@ -452,9 +576,11 @@ export default function Studio() {
           onRemoveSection={start=>setSections(previous=>previous.filter(s=>s.start!==start))} onSeekSection={start=>seek(start*FPS)}/>
           </TabsContent>
           <TabsContent value="project" forceMount>
-        <section className="panel"><div className="section-bar"><h2>Project</h2><span className="subtle">JSON · 1 MiB</span></div>
-          <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" onClick={saveProject}>Lưu project</Button><label className="filebutton">Nạp project<input id="project-file" type="file" accept=".json,application/json" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void loadProject(file);}}/></label></div>
-          <p className="hint">File lưu lời, các mốc từ, khổ khung và phạm vi xuất. Nhạc cùng video không nằm trong file: hãy chọn lại đúng hai tệp đó khi mở project.</p>
+        <section className="panel"><div className="section-bar"><h2>Project</h2><span className="subtle">{sessionSavedAt?`đã tự lưu lúc ${new Date(sessionSavedAt).toLocaleTimeString('vi-VN')}`:'chưa tự lưu'}</span></div>
+          <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" onClick={saveProject}>Lưu project</Button><label className="filebutton">Nạp project<input id="project-file" type="file" accept=".json,application/json" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void loadProject(file);}}/></label><Button type="button" variant="outline" onClick={restartSession}>Bắt đầu lại</Button></div>
+          <p className="hint">Studio tự lưu lời, mốc từ, khổ khung, phạm vi xuất, zoom cùng nhạc và video trong trình duyệt. Reload trang không mất project.</p>
+          <p className="hint">File .json để dành hoặc chuyển máy; nó không chứa nhạc và video.</p>
+          {sessionQuota && <p className="error" role="status">{QUOTA_NOTICE}</p>}
         </section>
           </TabsContent>
         </Tabs>
