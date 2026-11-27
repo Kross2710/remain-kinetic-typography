@@ -76,7 +76,7 @@ async function parseUpload(req, res) {
   }
   const fields = new Set();
   for (const key of form.keys()) {
-    if (fields.has(key) || !['project', 'audio', 'video'].includes(key)) {
+    if (fields.has(key) || !['project', 'audio', 'video', 'gpu'].includes(key)) {
       throw new RequestError(400, 'Send one project and at most one audio file and one video file.');
     }
     fields.add(key);
@@ -101,7 +101,11 @@ async function parseUpload(req, res) {
   }
   if (video?.size > maxVideoBytes) throw new RequestError(413, 'Video is limited to 100 MiB.');
   if (video?.size === 0) throw new RequestError(422, 'The video file is empty.');
-  return {project, audio, video};
+  // Optional: draw the frames with the machine's iGPU. It is a flag, never a path
+  // or an executable, so it cannot turn into an argument the server trusts.
+  const gpuRaw = form.get('gpu');
+  const gpu = gpuRaw === null ? false : ['1', 'true', 'yes'].includes(String(gpuRaw).toLowerCase());
+  return {project, audio, video, gpu};
 }
 
 function sendFile(res, filename) {
@@ -253,7 +257,7 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     job.timer.unref?.();
   };
 
-  const runJob = async (job, {project, audio, video, localPort}) => {
+  const runJob = async (job, {project, audio, video, gpu, localPort}) => {
     const assets = {};
     media = assets;
     const report = (update) => {
@@ -275,7 +279,7 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
       const audioSrc = await prepare('audio', audio, normalizeAudio);
       const videoSrc = await prepare('video', video, normalizeVideo);
       const range = project.renderRange;
-      await render({inputProps: {project, audioSrc, videoSrc},
+      await render({inputProps: {project, audioSrc, videoSrc}, gpu,
         ...(range ? {frameRange: [range.startFrame, range.endFrame - 1]} : {}),
         outputLocation: job.outputLocation, workspace: job.dir,
         signal: job.controller.signal, report});
@@ -454,9 +458,9 @@ async function mountStudioVite(app, server, allowedLocalRequest) {
   return vite;
 }
 
-async function runRenderer({inputProps, frameRange, outputLocation, workspace, signal, report}) {
+async function runRenderer({inputProps, frameRange, gpu, outputLocation, workspace, signal, report}) {
   const jobPath = join(workspace, 'render-job.json');
-  await writeFile(jobPath, JSON.stringify({inputProps, frameRange}), {signal});
+  await writeFile(jobPath, JSON.stringify({inputProps, frameRange, gpu}), {signal});
   const frames = frameRange ? frameRange[1] - frameRange[0] + 1 : inputProps.project.durationInFrames;
   // Chromium and the encoder can be much slower than playback on low-power hosts.
   const timeoutMs = Math.min(12 * 60 * 60_000, 5 * 60_000 + 10_000 * frames / FPS);
@@ -535,7 +539,10 @@ async function renderWorker(workspace, jobPath, outputLocation) {
   const [{bundle}, {renderMedia, selectComposition}] = await Promise.all([
     import('@remotion/bundler'), import('@remotion/renderer'),
   ]);
-  const {inputProps, frameRange} = JSON.parse(await readFile(jobPath, 'utf8'));
+  const {inputProps, frameRange, gpu} = JSON.parse(await readFile(jobPath, 'utf8'));
+  // Remotion has no VAAPI encoder, so on an Intel/AMD machine the iGPU can only draw
+  // the frames. Measured on the N100: 90 frames 3.84 fps -> 4.59 fps, PSNR 46.8 dB
+  // against the CPU render. 'angle-egl' produced a byte-identical file, so it is a no-op here.
   const totalFrames = frameRange ? frameRange[1] - frameRange[0] + 1 : inputProps.project.durationInFrames;
   const browserExecutable = process.env.REMOTION_BROWSER_EXECUTABLE || undefined;
   const report = (update) => process.stdout.write(`${progressPrefix}${JSON.stringify(update)}\n`);
@@ -549,9 +556,12 @@ async function renderWorker(workspace, jobPath, outputLocation) {
   const serveUrl = await bundle({entryPoint: renderEntry, outDir: join(workspace, 'bundle'),
     onProgress: (percent) => emit({phase: 'bundle', progress: percent / 100})});
   lastPercent = -1;
-  const composition = await selectComposition({serveUrl, id: 'StudioClip', inputProps, browserExecutable});
+  const chromiumOptions = gpu ? {gl: 'vulkan'} : undefined;
+  const composition = await selectComposition({serveUrl, id: 'StudioClip', inputProps, browserExecutable,
+    ...(chromiumOptions ? {chromiumOptions} : {})});
   report({phase: 'render', progress: 0, renderedFrames: 0, totalFrames, etaMs: null});
   await renderMedia({serveUrl, composition, inputProps, outputLocation, codec: 'h264', concurrency: 1, browserExecutable,
+    ...(chromiumOptions ? {chromiumOptions} : {}),
     onProgress: ({progress, renderedFrames, renderEstimatedTime, stitchStage}) =>
       emit({phase: stitchStage, progress, renderedFrames, totalFrames, etaMs: renderEstimatedTime}),
     ...(frameRange ? {frameRange} : {})});

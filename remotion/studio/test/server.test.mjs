@@ -110,6 +110,19 @@ test('exports MP4 from a validated multipart project with no media', async (t) =
   assert.deepEqual(props, {project, audioSrc: null, videoSrc: null});
 });
 
+test('passes the optional iGPU flag to the renderer and keeps it off by default', async (t) => {
+  const seen = [];
+  const base = await studio(t, {render: async (job) => {
+    seen.push(job.gpu);
+    await render(job);
+  }});
+  await downloadJob(base, await startJob(base, form(), {Origin: base}));
+  const gpuForm = form();
+  gpuForm.set('gpu', '1');
+  await downloadJob(base, await startJob(base, gpuForm, {Origin: base}));
+  assert.deepEqual(seen, [false, true]);
+});
+
 test('rejects cross-origin renders, including opaque browser origins', async (t) => {
   let renders = 0;
   const base = await studio(t, {render: async (job) => { renders++; await render(job); }});
