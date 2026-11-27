@@ -1,0 +1,148 @@
+import assert from 'node:assert/strict';
+import {ensureBrowser} from '@remotion/renderer';
+import {chromium} from 'playwright-core';
+import {startStudioServer} from '../server.mjs';
+
+const server = await startStudioServer({port: 0, dev: true, bindHost: '127.0.0.1'});
+const base = `http://127.0.0.1:${server.address().port}`;
+let browser;
+try {
+  const status = await ensureBrowser();
+  assert.ok('path' in status, JSON.stringify(status));
+  browser = await chromium.launch({executablePath: status.path, args: ['--no-sandbox']});
+  const page = await browser.newPage({viewport: {width: 1440, height: 900}});
+  page.setDefaultTimeout(5000);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(base);
+  const slider = page.getByRole('slider', {name: 'Vị trí timeline'});
+  const viewport = page.locator('.timeline-viewport');
+  const ruler = page.locator('.timeline-ruler');
+  const fit = page.getByRole('button', {name: 'Vừa khung'});
+  await fit.click();
+  assert.equal(await ruler.count(), 1, 'The timeline has a shared ruler');
+  const clickAt = async (target, ratio) => {
+    await target.scrollIntoViewIfNeeded();
+    const rect = await viewport.boundingBox();
+    const row = await target.boundingBox();
+    await page.mouse.click(rect.x + rect.width * ratio, row.y + row.height / 2);
+  };
+  const nearFrame = async expected => assert.ok(Math.abs(Number(await slider.inputValue()) - expected) <= 1);
+  await clickAt(ruler, 0.25);
+  await nearFrame(225);
+  const first = await viewport.boundingBox();
+  const y = (await ruler.boundingBox()).y + 22;
+  await page.mouse.move(first.x + first.width / 4, y);
+  await page.mouse.down();
+  await page.mouse.move(first.x + first.width / 2, y + 50, {steps: 4});
+  await page.mouse.up();
+  await nearFrame(450);
+  const playhead = await page.locator('.timeline-playhead').boundingBox();
+  const lyric = await page.locator('.lyric-track').boundingBox();
+  assert.ok(Math.abs(playhead.x + playhead.width / 2 - (first.x + first.width / 2)) < 2);
+  assert.ok(playhead.y + playhead.height >= lyric.y + lyric.height - 1);
+  await slider.press('ArrowRight');
+  await nearFrame(451);
+  assert.equal(await slider.inputValue(), '451');
+
+  await slider.fill('0');
+  for (let i = 0; i < 6; i++) await page.getByRole('button', {name: 'Phóng to timeline'}).click();
+  assert.ok(await ruler.locator('.timeline-tick:not(.major)').count());
+  const late = page.getByRole('button', {name: /^Tua đến dòng 4:/});
+  assert.equal(await late.count(), 0, 'Offscreen cues are not mounted');
+  const cueByNumber = n => page.getByRole('button', {name: new RegExp(`^Tua đến dòng ${n}:`)});
+  await cueByNumber(1).focus();
+  await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label')?.startsWith('Tua đến dòng 2:'));
+  assert.ok(await viewport.evaluate(el => el.scrollLeft > 0), 'Keyboard navigation reveals an offscreen cue');
+  await nearFrame(0);
+  await page.keyboard.press('Enter');
+  await nearFrame(150);
+  await page.keyboard.press('Home');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label')?.startsWith('Tua đến dòng 1:'));
+  await fit.focus();
+  const getLanePositions = () => viewport.locator('.track, .timeline-ruler').evaluateAll(rows => rows.map(row => row.getBoundingClientRect().x));
+  const before = await getLanePositions();
+  await viewport.evaluate(el => { el.scrollLeft = el.scrollWidth; });
+  await late.waitFor();
+  const after = await getLanePositions();
+  assert.equal(after.length, 4);
+  assert.ok(after[0] < before[0]);
+  assert.ok(after.every((x, i) => x - before[i] === after[0] - before[0]), 'All tracks and ruler pan together');
+  await late.click();
+  await nearFrame(660);
+  const scale = await viewport.locator('.track-strip').evaluate(el => el.getBoundingClientRect().width / 30);
+  const visibleX = await viewport.evaluate(el => el.scrollLeft + el.clientWidth / 4);
+  await clickAt(page.locator('.video-track'), 0.25);
+  await nearFrame(Math.round(visibleX / scale * 30));
+  await fit.click();
+  assert.equal(await viewport.evaluate(el => el.scrollLeft), 0, 'Fit resets pan');
+  await page.setViewportSize({width: 390, height: 844});
+  await fit.click();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  assert.ok((await ruler.boundingBox()).height >= 44);
+  assert.ok((await page.locator('.lyric-track button').first().boundingBox()).height >= 44);
+  await page.setViewportSize({width: 1200, height: 844});
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.timeline-viewport');
+    return Number.parseFloat(el.querySelector('.track-strip').style.width) === el.clientWidth;
+  }, undefined, {timeout: 3000});
+  await clickAt(ruler, 0.75);
+  await nearFrame(675);
+  // A no-op zoom at the minimum scale must leave Fit mode active for resize.
+  await page.setViewportSize({width: 240, height: 844});
+  await fit.click();
+  const fittedAtFloor = await viewport.evaluate(el => ({width: el.clientWidth, strip: el.querySelector('.track-strip').getBoundingClientRect().width}));
+  assert.ok(fittedAtFloor.width < fittedAtFloor.strip, 'Narrow viewport fits at the minimum zoom floor');
+  await page.getByRole('button', {name: 'Thu nhỏ timeline'}).click();
+  await page.setViewportSize({width: 1200, height: 844});
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.timeline-viewport');
+    return Number.parseFloat(el.querySelector('.track-strip').style.width) === el.clientWidth;
+  }, undefined, {timeout: 3000});
+  const mobile = await browser.newPage({viewport: {width: 390, height: 844}, isMobile: true, hasTouch: true});
+  await mobile.goto(base);
+  await mobile.getByRole('button', {name: 'Vừa khung'}).click();
+  await mobile.locator('.timeline-ruler').tap({position: {x: 150, y: 22}});
+  const mobileValue = Number(await mobile.getByRole('slider', {name: 'Vị trí timeline'}).inputValue());
+  const mobileWidth = await mobile.locator('.track-strip').evaluate(el => el.clientWidth);
+  assert.ok(Math.abs(mobileValue - 150 / mobileWidth * 900) <= 1, 'Tapping the ruler seeks on phones');
+  const mobileRuler = mobile.locator('.timeline-ruler');
+  const touch = await mobile.context().newCDPSession(mobile);
+  await mobileRuler.scrollIntoViewIfNeeded();
+  const mobileRulerBox = await mobileRuler.boundingBox();
+  const initialY = await mobile.evaluate(() => scrollY);
+  const sendTouch = (type, dy, dx = 0) => touch.send('Input.dispatchTouchEvent', {type,
+    touchPoints: type === 'touchEnd' ? [] : [{x: mobileRulerBox.x + 60 + dx, y: mobileRulerBox.y + 22 + dy}],
+  });
+  await sendTouch('touchStart', 0);
+  await sendTouch('touchMove', 0, 60);
+  await sendTouch('touchEnd', 0);
+  const draggedFrame = Number(await mobile.getByRole('slider', {name: 'Vị trí timeline'}).inputValue());
+  assert.ok(Math.abs(draggedFrame - 120 / mobileWidth * 900) <= 1, 'Dragging the ruler seeks on phones');
+  await sendTouch('touchStart', 0);
+  for (const dy of [-20, -45, -80, -120]) await sendTouch('touchMove', dy);
+  await sendTouch('touchEnd', 0);
+  await mobile.waitForFunction(y => scrollY > y, initialY);
+  assert.equal(Number(await mobile.getByRole('slider', {name: 'Vị trí timeline'}).inputValue()), draggedFrame,
+    'A vertical swipe on the ruler scrolls the page without seeking');
+  await mobile.close();
+
+  await page.getByRole('tab', {name: 'Lời', exact: true}).click();
+  await page.locator('#lyrics').fill('[00:20.00]Đoạn nằm ngoài vùng nhìn');
+  await page.getByRole('button', {name: 'Áp dụng lời'}).click();
+  await slider.fill('0');
+  for (let i = 0; i < 6; i++) await page.getByRole('button', {name: 'Phóng to timeline'}).click();
+  assert.equal(await viewport.locator('.lyric-track button').count(), 0);
+  await viewport.press('End');
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label')?.startsWith('Tua đến dòng 1:'));
+  await nearFrame(0);
+  await page.keyboard.press('Enter');
+  await nearFrame(600);
+  assert.deepEqual(errors, []);
+  console.log('Timeline verified: click/drag and keyboard seek, shared pan, offscreen cues, fit and mobile layout.');
+} finally {
+  await browser?.close();
+  server.close();
+  server.closeAllConnections();
+}

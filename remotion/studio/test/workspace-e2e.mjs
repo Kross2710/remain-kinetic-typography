@@ -60,10 +60,10 @@ try {
     await page.setViewportSize(viewport);
     await open();
     for (const format of ['tall','wide']) {
-      await page.getByLabel('Khung hình').selectOption(format);
+      await page.getByRole('combobox',{name:/Khung hình/}).selectOption(format);
       await page.evaluate(()=>scrollTo(0,0));
       const bounds = await page.evaluate(()=>{
-        return Object.fromEntries(['.play-toggle','.tap','.track:not(.video-track)'].map(selector=>{
+        return Object.fromEntries(['.play-toggle','.tap','.lyric-track'].map(selector=>{
           const el = document.querySelector(selector);
           const r = el.getBoundingClientRect();
           return [selector,{top:r.top,bottom:r.bottom,visible:el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2))}];
