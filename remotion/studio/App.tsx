@@ -48,8 +48,12 @@ export default function Studio() {
   const [busy,setBusy]=useState(false);
   const [renderJob,setRenderJob]=useState<RenderJob|null>(null);
   const activeJobId=useRef<string|null>(null);
+  const uploadAbort=useRef<AbortController|null>(null);
   const sessionDb=useRef<IDBDatabase|null>(null);
   const restoredView=useRef<View|null>(null);
+  // Bumped when a session is applied, so a restored zoom is consumed even when
+  // the restored timeline is the same length the page already had.
+  const [sessionApplied,setSessionApplied]=useState(0);
   const autosaveTimer=useRef(0);
   const [sessionSavedAt,setSessionSavedAt]=useState<number|null>(null);
   const [sessionQuota,setSessionQuota]=useState(false);
@@ -103,7 +107,7 @@ export default function Studio() {
     setView(current=>zoomView(current,{factor,duration,viewportWidth,anchorTime:anchorTime ?? time}));
   });
   const scrollTimeline=useEffectEvent((scrollX:number)=>setView(current=>current.scrollX===scrollX?current:{...current,scrollX}));
-  useLayoutEffect(()=>{fitTimeline();},[duration]);
+  useLayoutEffect(()=>{fitTimeline();},[duration,sessionApplied]);
   useEffect(()=>{
     for (const track of [videoTrack.current,lyricTrack.current]) if (track && track.scrollLeft!==view.scrollX) track.scrollLeft=view.scrollX;
   },[view.scrollX]);
@@ -336,19 +340,26 @@ export default function Studio() {
   }));
   function cancelRender() {
     const id=activeJobId.current;
-    if(!id)return;
-    void fetch(`/api/render/jobs/${id}/cancel`,{method:'POST'})
-      .then(response=>{if(!response.ok)setError('Không huỷ được render.');})
-      .catch(()=>setError('Không huỷ được render.'));
+    if(id){
+      void fetch(`/api/render/jobs/${id}/cancel`,{method:'POST'})
+        .then(response=>{if(!response.ok)setError('Không huỷ được render.');})
+        .catch(()=>setError('Không huỷ được render.'));
+      return;
+    }
+    // While the project is still being uploaded there is no job id yet, so the
+    // only thing that can be stopped is the request itself.
+    uploadAbort.current?.abort();
   }
   async function exportClip() {
     setError('');setNotice('');setBusy(true);
     setRenderJob({phase:'upload',progress:0,renderedFrames:null,totalFrames:null,etaSeconds:null});
+    const upload=new AbortController();
+    uploadAbort.current=upload;
     try {
       const data=new FormData();data.set('project',JSON.stringify(validateProject({...project,renderRange})));
       if(audio)data.set('audio',audio.file);
       if(video)data.set('video',video.file);
-      const started=await fetch('/api/render',{method:'POST',body:data});
+      const started=await fetch('/api/render',{method:'POST',body:data,signal:upload.signal});
       if(!started.ok){const body=await started.json().catch(()=>({}));throw Error(body.error || `Không gửi được project (HTTP ${started.status}).`);}
       const {jobId}=await started.json();
       activeJobId.current=jobId;
@@ -359,8 +370,11 @@ export default function Studio() {
       if(finished.status!=='done')throw Error(finished.error || 'Không xuất được video.');
       await downloadJobFile(jobId);
       setNotice('Đã xuất MP4.');
-    } catch(e){setError(errText(e));}
-    finally {activeJobId.current=null;forgetJobId();setRenderJob(null);setBusy(false);}
+    } catch(e){
+      if(upload.signal.aborted)setNotice('Đã huỷ trước khi render bắt đầu.');
+      else setError(errText(e));
+    }
+    finally {activeJobId.current=null;forgetJobId();uploadAbort.current=null;setRenderJob(null);setBusy(false);}
   }
 
   const downloadJobFile=useEffectEvent(async (id:string)=>{
@@ -375,6 +389,9 @@ export default function Studio() {
   // and take the video once it lands.
   const resumeRenderJob=useEffectEvent(async (id:string)=>{
     setBusy(true);
+    // The reattached id has to be the cancel target too: the button appears
+    // because the job is busy, so it must be able to stop that job.
+    activeJobId.current=id;
     setRenderJob({phase:'prepare',progress:0,renderedFrames:null,totalFrames:null,etaSeconds:null});
     try {
       const finished=await watchRenderJob(id);
@@ -396,6 +413,10 @@ export default function Studio() {
     if(loaded.renderRange){setRenderMode('range');setRangeStart(String(loaded.renderRange.startFrame/FPS));setRangeEnd(String(loaded.renderRange.endFrame/FPS));}
     else {setRenderMode('all');setRangeStart('0');setRangeEnd(null);}
     restoredView.current=snapshot.record.view;
+    // The layout effect only re-fits on a duration change, and a lyrics-only
+    // session (or a clip of the same length) does not change it: bump the
+    // effect so the saved zoom is applied now instead of on the next fit.
+    setSessionApplied(applied=>applied+1);
     for (const kind of ['audio','video'] as const) {
       const entry=snapshot.media[kind];
       if(!entry || !Number.isFinite(entry.seconds) || entry.seconds<1/FPS)continue;
@@ -409,7 +430,9 @@ export default function Studio() {
     if(!db || sessionRestoring.current)return;
     const {audio,video}=mediaState.current;
     try {
-      const record=buildSessionRecord({project,cues,length,renderRange,media:{audio:audio?.file.name ?? null,video:video?.file.name ?? null},view,savedAt:Date.now()});
+      // The preview drops markers past the current duration; the session must
+      // keep every section the user placed, exactly like the .json file does.
+      const record=buildSessionRecord({project:{...project,sections},cues,length,renderRange,media:{audio:audio?.file.name ?? null,video:video?.file.name ?? null},view,savedAt:Date.now()});
       const outcome=await saveSession(db,{record,media:withMedia?{audio:audio?{name:audio.file.name,seconds:audio.seconds,blob:audio.file}:null,video:video?{name:video.file.name,seconds:video.seconds,blob:video.file}:null}:undefined});
       setSessionSavedAt(outcome.record.savedAt);
       setSessionQuota(outcome.quotaExceeded);

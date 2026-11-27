@@ -35,6 +35,9 @@ const jobOutputTtlMs = 30 * 60_000;
 // A finished, failed or cancelled job stays readable for a short while, because
 // a client that was reloading needs to learn how its render ended.
 const jobRecordGraceMs = 60_000;
+// A POST holds the single render slot from the moment it arrives, while it is
+// still reading the body. This placeholder is what a second tab sees.
+const acceptingUpload = 'accepting-upload';
 
 class RequestError extends Error {
   constructor(status, message) {
@@ -356,11 +359,20 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
   app.post('/api/render', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!sameOriginRequest(req)) return res.status(403).json({error: 'Open Studio locally to render a video.'});
+    // The slot is claimed synchronously, before the first await. Reading a
+    // 100 MiB upload takes time, and two tabs that both passed a later check
+    // would render at once and overwrite each other's media on a machine that
+    // only has room for one render.
     if (running) return res.status(409).json({error: 'A render is already in progress.'});
+    running = acceptingUpload;
+    const releaseClaim = () => { if (running === acceptingUpload) running = null; };
+    // A client that hangs up mid-upload must not leave the slot held forever.
+    req.once('close', () => { if (!req.complete) releaseClaim(); });
     let upload;
     try {
       upload = await parseUpload(req, res);
     } catch (error) {
+      releaseClaim();
       if (res.destroyed) return;
       if (res.headersSent) return res.destroy();
       if (error instanceof RequestError) return res.status(error.status).json({error: error.message});
@@ -372,6 +384,7 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     try {
       dir = await mkdtemp(join(tmpdir(), 'remain-render-'));
     } catch (error) {
+      releaseClaim();
       console.error('Studio render workspace failed:', error);
       return res.status(500).json({error: 'Could not create a render workspace.'});
     }
@@ -380,7 +393,7 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
       finishedAtMs: null, error: null, dir, outputLocation: join(dir, 'clip.mp4'),
       controller: new AbortController(), timer: null};
     jobs.set(job.id, job);
-    // Claim the single render slot before anything else can race for it.
+    // The placeholder becomes the real job before any other request can race for it.
     running = job.id;
     res.status(202).json({jobId: job.id});
     // The job outlives this request on purpose: a reload or a closed tab must

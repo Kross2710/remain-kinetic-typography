@@ -461,6 +461,34 @@ test('rejects a second render until the first job finishes', async (t) => {
   await retryFile.file.arrayBuffer();
 });
 
+test('a second render is rejected while the first project is still uploading', async (t) => {
+  const base = await studio(t);
+  const packed = new Response(form());
+  const contentType = packed.headers.get('content-type');
+  const body = Buffer.from(await packed.arrayBuffer());
+  const half = Math.floor(body.length / 2);
+  // Hold the first request inside the upload: half the body is sent and the
+  // rest waits. The slot has to be claimed before the body is even read.
+  let finishUpload;
+  const first = new Promise((resolve, reject) => {
+    const req = request(`${base}/api/render`, {method: 'POST', headers: {
+      'content-type': contentType, 'content-length': String(body.length),
+    }}, resolve);
+    req.on('error', reject);
+    req.write(body.subarray(0, half));
+    finishUpload = () => req.end(body.subarray(half));
+  });
+  const second = await post(base);
+  assert.equal(second.status, 409, 'An upload that has not finished must already hold the single render slot');
+  assert.match((await second.json()).error, /progress/i);
+  finishUpload();
+  const firstResponse = await first;
+  assert.equal(firstResponse.statusCode, 202, 'The upload that claimed the slot must still get its job');
+  const {jobId} = JSON.parse(await new Response(firstResponse).text());
+  const {file} = await downloadJob(base, jobId);
+  assert.deepEqual(Buffer.from(await file.arrayBuffer()), mp4);
+});
+
 test('a render keeps running after the client that started it goes away', async (t) => {
   const entered = Promise.withResolvers();
   const release = Promise.withResolvers();

@@ -19,6 +19,7 @@
     "studio:progress:ui": "node studio/test/progress-ui.mjs",
     "studio:e2e:media": "node studio/test/media-e2e.mjs",
     "studio:e2e:session": "node studio/test/session-e2e.mjs",
+    "studio:e2e:session:edge": "node studio/test/session-edge-e2e.mjs",
     "studio:dev": "node studio/server.mjs --dev"
   },
   "dependencies": {
