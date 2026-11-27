@@ -1,7 +1,7 @@
 export type Preset = 'classic'|'aurora';
 export type Font = 'serif'|'sans'|'mono';
 export type Effect = {preset:Preset;font:Font;size:number;color:string;accent:string;entry:number;stagger:number};
-export type SectionKind = 'intro'|'verse'|'chorus'|'bridge'|'outro';
+export type SectionKind = 'intro'|'verse'|'pre-chorus'|'chorus'|'bridge'|'outro';
 export type SongSection = {start:number;kind:SectionKind};
 export const PRESETS:Readonly<Record<Preset,Readonly<Effect>>>;
 export const FONT_STACKS:Readonly<Record<Font,string>>;

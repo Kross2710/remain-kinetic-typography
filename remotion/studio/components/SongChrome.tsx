@@ -1,7 +1,7 @@
 import {interpolateColors} from 'remotion';
 import {FONT_STACKS, SECTION_LABELS, type SectionKind, type SongSection} from '../effects.mjs';
 
-const palette: Record<SectionKind,string>={intro:'#cbd8e6',verse:'#bfe3da',chorus:'#f2c98a',bridge:'#c8b6e0',outro:'#d2bda7'};
+const palette: Record<SectionKind,string>={intro:'#cbd8e6',verse:'#bfe3da','pre-chorus':'#dad2b2',chorus:'#f2c98a',bridge:'#c8b6e0',outro:'#d2bda7'};
 const clamp=(x:number)=>Math.max(0,Math.min(1,x));
 const smooth=(x:number)=>x*x*(3-2*x);
 

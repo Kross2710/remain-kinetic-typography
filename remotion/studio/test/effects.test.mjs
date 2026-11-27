@@ -5,7 +5,7 @@ import {parseProjectFile,serializeProject} from '../editor.mjs';
 
 const aurora={preset:'aurora',font:'serif',size:1.1,color:'#ece3d4',accent:'#f0b15c',entry:.6,stagger:.04};
 const classic={...aurora,preset:'classic'};
-const sections=[{start:0,kind:'verse'},{start:3,kind:'chorus'}];
+const sections=[{start:0,kind:'verse'},{start:2.37,kind:'pre-chorus'},{start:3,kind:'chorus'}];
 const original={width:720,height:1280,durationInFrames:180,cues:importLyrics('Một hai\nBa bốn',6)};
 
 test('round trips project, line and word styling without touching timings',()=>{
@@ -22,5 +22,5 @@ test('round trips project, line and word styling without touching timings',()=>{
 
 test('rejects unknown render styles and invalid section data',()=>{
  for(const effect of [{...aurora,font:'url(remote)'},{...aurora,color:'red'},{...aurora,entry:99},{...aurora,preset:'custom'}]) assert.throws(()=>validateProject({...original,effect}));
- for(const bad of [[{start:-1,kind:'verse'}],[{start:1,kind:'BOGUS'}],[...sections,{start:2,kind:'bridge'}]]) assert.throws(()=>validateProject({...original,sections:bad}));
+ for(const bad of [[{start:-1,kind:'verse'}],[{start:1,kind:'BOGUS'}],[...sections,{start:2,kind:'bridge'}],[{start:0,kind:'Pre-Chorus'}]]) assert.throws(()=>validateProject({...original,sections:bad}));
 });

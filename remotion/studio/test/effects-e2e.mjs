@@ -70,6 +70,10 @@ try {
   assert.ok(await outgoing.evaluate(el=>Number(el.style.opacity)<1 && Number(el.style.opacity)>0));
   await sampleFrame(185);
   await outgoing.waitFor({state:'detached'});
+  await slider.fill('221');
+  await effects.getByLabel('Loại đoạn').selectOption({label:'Pre-Chorus'});
+  await effects.getByRole('button',{name:'Thêm đoạn tại playhead'}).click();
+  assert.equal(await overlay.getAttribute('data-song-section'),'pre-chorus');
   await effects.getByLabel('Hiện thanh Verse/Chorus trong video').uncheck();
   await overlay.waitFor({state:'detached'});
   await effects.getByLabel('Hiện thanh Verse/Chorus trong video').check();
@@ -79,7 +83,7 @@ try {
   const path=join(scratch,'project.json');
   await (await saved).saveAs(path);
   const project=JSON.parse(await readFile(path,'utf8'));
-  assert.deepEqual(project.sections,[{start:0,kind:'verse'},{start:5,kind:'chorus'}]);
+  assert.deepEqual(project.sections,[{start:0,kind:'verse'},{start:5,kind:'chorus'},{start:221/30,kind:'pre-chorus'}]);
   assert.equal(project.cues[0].effect.font,'mono');
   assert.equal(project.cues[0].words[0].emphasis,true);
   assert.equal(project.effect.font,'sans');
@@ -96,13 +100,13 @@ try {
   if (!process.env.STUDIO_PREVIEW_ONLY) {
     await page.getByLabel('Phạm vi xuất').selectOption('range');
     await page.getByLabel('Bắt đầu (giây)').fill('4.5');
-    await page.getByLabel('Kết thúc (giây)').fill('6');
+    await page.getByLabel('Kết thúc (giây)').fill('8.5');
     const exported=page.waitForEvent('download',{timeout:90000});
     await page.getByRole('button',{name:'Xuất MP4',exact:true}).click();
     const mp4=process.env.STUDIO_EFFECTS_MP4 ?? join(scratch,'chorus.mp4');
     await (await exported).saveAs(mp4);
     const probe=JSON.parse(execFileSync('ffprobe',['-v','error','-select_streams','v:0','-show_entries','stream=codec_name,nb_frames','-of','json',mp4],{encoding:'utf8'}));
-    assert.deepEqual(probe.streams.map(({codec_name,nb_frames})=>({codec_name,nb_frames})),[{codec_name:'h264',nb_frames:'45'}]);
+    assert.deepEqual(probe.streams.map(({codec_name,nb_frames})=>({codec_name,nb_frames})),[{codec_name:'h264',nb_frames:'120'}]);
     const crop=(t,region)=>execFileSync('ffmpeg',['-v','error','-ss',t,'-i',mp4,'-vf',`crop=${region},format=rgb24`,'-frames:v','1','-f','rawvideo','-']);
     // Sample the same point in the top rail before and after the boundary.
     const cool=crop('0.3','2:2:100:0');
@@ -110,6 +114,9 @@ try {
     assert.ok(cool[2]>cool[0] && warm[0]>warm[2],`Expected cooler Verse and warmer Chorus rail: ${[...cool.subarray(0,3)]} -> ${[...warm.subarray(0,3)]}`);
     const label=crop('1.3','240:32:20:12');
     assert.ok(label.some((r,i)=>i%3===0 && r>140 && label[i+1]>140 && label[i+2]>140),'Expected section label pixels in the exported header');
+    const preChorusLabel=crop('3.7','240:32:20:12');
+    assert.notDeepEqual(preChorusLabel,label,'Expected the Pre-Chorus label to replace Chorus in the MP4');
+    assert.ok(preChorusLabel.some((r,i)=>i%3===0 && r>140 && preChorusLabel[i+1]>140 && preChorusLabel[i+2]>140),'Expected visible Pre-Chorus label pixels');
   }
   assert.deepEqual(errors,[]);
   console.log('Verified presets, line override, word emphasis, section seek/toggle, project reload and mobile layout'+(process.env.STUDIO_PREVIEW_ONLY?'.':', plus rendered section overlay.'));

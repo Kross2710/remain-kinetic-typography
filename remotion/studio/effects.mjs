@@ -3,7 +3,7 @@ export const PRESETS = Object.freeze({
   aurora: Object.freeze({preset:'aurora',font:'serif',size:1,color:'#ece3d4',accent:'#f0b15c',entry:.65,stagger:.045}),
 });
 export const FONT_STACKS = Object.freeze({serif:'Georgia, Palatino, serif',sans:'Arial, sans-serif',mono:'Courier New, monospace'});
-export const SECTION_LABELS = Object.freeze({intro:'Intro',verse:'Verse',chorus:'Chorus',bridge:'Bridge',outro:'Outro'});
+export const SECTION_LABELS = Object.freeze({intro:'Intro',verse:'Verse','pre-chorus':'Pre-Chorus',chorus:'Chorus',bridge:'Bridge',outro:'Outro'});
 export const MAX_SECTIONS = 100;
 
 export function validateEffect(effect) {
