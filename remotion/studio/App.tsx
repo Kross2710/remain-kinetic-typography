@@ -106,9 +106,11 @@ export default function Studio() {
     } else fitTimeline();
   });
   const zoomTimeline=(factor:number,anchorTime?:number)=>{
-    timelineFitted.current=false;
     const viewportWidth=trackWidth();
-    setView(current=>zoomView(current,{factor,duration,viewportWidth,anchorTime:anchorTime ?? time}));
+    const options={factor,duration,viewportWidth,anchorTime:anchorTime ?? time};
+    if (zoomView(view,options)===view) return;
+    timelineFitted.current=false;
+    setView(current=>zoomView(current,options));
   };
   const scrollTimeline=(scrollX:number)=>setView(current=>current.scrollX===scrollX?current:{...current,scrollX});
   const resizeTimeline=useEffectEvent((width:number)=>{

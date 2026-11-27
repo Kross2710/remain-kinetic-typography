@@ -89,6 +89,17 @@ try {
   }, undefined, {timeout: 3000});
   await clickAt(ruler, 0.75);
   await nearFrame(675);
+  // A no-op zoom at the minimum scale must leave Fit mode active for resize.
+  await page.setViewportSize({width: 240, height: 844});
+  await fit.click();
+  const fittedAtFloor = await viewport.evaluate(el => ({width: el.clientWidth, strip: el.querySelector('.track-strip').getBoundingClientRect().width}));
+  assert.ok(fittedAtFloor.width < fittedAtFloor.strip, 'Narrow viewport fits at the minimum zoom floor');
+  await page.getByRole('button', {name: 'Thu nhỏ timeline'}).click();
+  await page.setViewportSize({width: 1200, height: 844});
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.timeline-viewport');
+    return Number.parseFloat(el.querySelector('.track-strip').style.width) === el.clientWidth;
+  }, undefined, {timeout: 3000});
   const mobile = await browser.newPage({viewport: {width: 390, height: 844}, isMobile: true, hasTouch: true});
   await mobile.goto(base);
   await mobile.getByRole('button', {name: 'Vừa khung'}).click();
