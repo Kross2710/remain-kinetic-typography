@@ -8,7 +8,12 @@
     "169": "node capture.mjs 16:9",
     "916": "node capture.mjs 9:16",
     "both": "node capture.mjs both",
-    "test": "node capture.mjs 16:9 --q 720 --fps 30 --seconds 12"
+    "169:gpu": "node capture.mjs 16:9 --hw --gpu",
+    "916:gpu": "node capture.mjs 9:16 --hw --gpu",
+    "both:gpu": "node capture.mjs both --hw --gpu",
+    "fast:gpu": "node render-fast.mjs both --hw --gpu",
+    "test": "node capture.mjs 16:9 --q 720 --fps 30 --seconds 12",
+    "test:gpu": "node capture.mjs 16:9 --q 720 --fps 30 --seconds 12 --hw --gpu"
   },
   "dependencies": {
     "puppeteer-core": "^25.2.1"
