@@ -79,6 +79,41 @@ test('two-hour, 20 Hz envelope stays bounded without reading PCM', () => {
   assert.equal(result.candidates[0].time, 0.5);
 });
 
+test('late visible window filters observed onsets before candidate cap while retaining global confidence', () => {
+  const peaks = new Float32Array(144000);
+  for (let i = 10; i < peaks.length; i += 10) peaks[i] = 0.9;
+  const result = detectBeatCandidates({
+    peaks, secondsPerPeak: 0.05, startTime: 7180, endTime: 7182, maxCandidates: 3,
+  });
+  assert.deepEqual(result, {
+    candidates: [7180, 7180.5, 7181].map(time => ({time, confidence: 1})),
+    tempoBpm: 120, confidence: 1,
+  });
+});
+
+test('visible window includes exact bin boundaries despite floating-point conversion', () => {
+  const peaks = pulse(train(0, 0.3, 10));
+  const result = detectBeatCandidates({peaks, secondsPerPeak: 0.05, startTime: 0.3, endTime: 0.6});
+  assert.equal(result.candidates.length, 2);
+  assert.ok(Math.abs(result.candidates[0].time - 0.3) < 1e-9);
+  assert.ok(Math.abs(result.candidates[1].time - 0.6) < 1e-9);
+});
+
+test('empty visible window never extrapolates beats but retains whole-envelope tempo confidence', () => {
+  const result = detectBeatCandidates({
+    peaks: pulse(train(0.5, 0.5, 12)), secondsPerPeak: 0.05, startTime: 0.6, endTime: 0.9,
+  });
+  assert.deepEqual(result, {candidates: [], tempoBpm: 120, confidence: 1});
+});
+
+test('invalid visible windows fail closed', () => {
+  const peaks = pulse(train(0.5, 0.5, 12));
+  for (const window of [
+    {startTime: -1, endTime: 2}, {startTime: 2, endTime: 1},
+    {startTime: NaN}, {endTime: Infinity},
+  ]) assert.throws(() => detectBeatCandidates({peaks, secondsPerPeak: 0.05, ...window}), RangeError);
+});
+
 test('isolated transient doublets do not imply a beat train', () => {
   const times = [0.5, 1, 2.6, 3.1, 4.8, 5.3, 7.1, 7.6, 9.5, 10, 12, 12.5];
   assert.deepEqual(detectBeatCandidates({peaks: pulse(times, 0.05, 14), secondsPerPeak: 0.05, minConfidence: 0.5}), {

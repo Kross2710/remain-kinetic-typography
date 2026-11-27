@@ -16,8 +16,18 @@ export type BeatOptions = {
   maxBpm?: number;
   /** Suppress unsupported detections; default 0.7. Snap UX remains OFF by default. */
   minConfidence?: number;
-  /** Maximum observed onset candidates returned in chronological order; default 512. */
+  /** Inclusive visible start in seconds from the full envelope's time zero; default 0. */
+  startTime?: number;
+  /** Inclusive visible end in seconds; default peaks.length * secondsPerPeak. */
+  endTime?: number;
+  /** Maximum observed onset candidates returned in chronological order AFTER window filtering; default 512. */
   maxCandidates?: number;
 };
-/** Returns only detected onsets in supported runs of >=6; no generated beat grid. */
+/**
+ * Analyze the full bounded envelope for tempo/confidence, then return only observed onsets
+ * inside [startTime, endTime] in supported runs of >=6, capped by maxCandidates.
+ * Supply the full envelope and the current visible timeline window to snap late in long songs;
+ * never infer a beat grid outside observed onsets. A window with no onsets may still have
+ * globally supported tempo/confidence. Omit the window for the original whole-envelope result.
+ */
 export function detectBeatCandidates(options: BeatOptions): BeatAnalysis;
