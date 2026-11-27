@@ -675,7 +675,7 @@ export default function Studio() {
         <span className="subtle">{seconds(time)} / {seconds(duration)} · {FPS} fps</span></div></div>
       <TimelineTracks viewport={timelineViewport} viewportWidth={timelineWidth} view={view} length={length} frame={frame}
         cues={visibleCues} allCues={cues} liveLine={liveLine} selectedLine={!following && selection ? line : null} snapEnabled={snapEnabled}
-        video={video && {name:video.file.name,seconds:(videoLength ?? 0)/FPS}} audio={audio && {name:audio.file.name,seconds:audio.seconds}}
+        video={video && {name:video.file.name,seconds:(videoLength ?? 0)/FPS}} audio={audio && {name:audio.file.name,seconds:audio.seconds,src:audio.src}}
         onScroll={scrollTimeline} onSeek={seek} onPickCue={pickTimelineCue} onCommit={next=>edit({type:'commit',cues:next})}/>
       </section>
     </main>

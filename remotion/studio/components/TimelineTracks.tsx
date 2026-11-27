@@ -2,8 +2,9 @@ import {useLayoutEffect,useMemo,useRef,useState,type KeyboardEvent,type PointerE
 import {contentWidth,timeToX,xToTime,type View} from '../editor.mjs';
 import {FPS,type Cue} from '../project.mjs';
 import {moveCue,snapTime,trimCue,rulerTicks,visibleCues} from '../timeline.mjs';
+import {useWaveform} from './useWaveform';
 
-type MediaClip={name:string;seconds:number};
+type MediaClip={name:string;seconds:number;src?:string};
 const TOUCH_SLOP=8;
 type Props={
   viewport:RefObject<HTMLDivElement|null>; viewportWidth:number; view:View;
@@ -23,6 +24,7 @@ export function TimelineTracks({viewport,viewportWidth,view,length,frame,cues,al
   const gesture=useRef<{x:number;y:number;scrubbing:boolean}|null>(null);
   const ticks=useMemo(()=>rulerTicks(view,viewportWidth,duration),[view,viewportWidth,duration]);
   const blocks=useMemo(()=>visibleCues(displayed,view,viewportWidth,duration,focusedCue),[displayed,view,viewportWidth,duration,focusedCue]);
+  const {bars:waveform}=useWaveform(audio?.src ? {src:audio.src,seconds:audio.seconds} : null,view,viewportWidth);
   const beginCue=(e:PointerEvent<HTMLButtonElement>,index:number)=>{
     if (!e.isPrimary || e.button!==0) return;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -110,6 +112,7 @@ export function TimelineTracks({viewport,viewportWidth,view,length,frame,cues,al
   };
   const mediaTrack=(clip:MediaClip|null,empty:string,kind:string)=><div className={`track ${kind}-track`}>
     {clip?<span className="timeline-media-clip" title={clip.name} style={{width:timeToX(clip.seconds,view)}}>{clip.name}</span>:<span className="timeline-empty">{empty}</span>}
+    {kind==='audio' && waveform.map(({x,amplitude},index)=><span key={index} className="waveform-bar" aria-hidden="true" style={{left:x,height:`${Math.max(2,amplitude*32)}px`}}/>)}
   </div>;
 
   return <div className="timeline-grid">

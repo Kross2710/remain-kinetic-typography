@@ -16,6 +16,7 @@
 .timeline-media-clip,.timeline-empty{display:block;height:calc(var(--lane-h) - 2px);margin-block:1px;padding-inline:7px;color:var(--muted);line-height:calc(var(--lane-h) - 2px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .timeline-media-clip{max-width:100%;color:var(--ink);border-radius:3px;background:#392934}
 .video-track .timeline-media-clip{background:#3c334e}
+.audio-track .waveform-bar{position:absolute;top:50%;width:2px;transform:translate(-1px,-50%);border-radius:2px;background:#f0b15c;pointer-events:none;opacity:.9}
 .track button{position:absolute;top:1px;min-height:0;height:calc(var(--lane-h) - 2px);white-space:nowrap;text-overflow:ellipsis;overflow:hidden;padding:0 5px;text-align:left;border-radius:2px;background:#34262d;font-size:12px;line-height:calc(var(--lane-h) - 2px)}
 .track button.live{background:#674b2d;color:#fff0d7}
 .timeline-playhead{position:absolute;top:0;bottom:0;width:2px;transform:translateX(-1px);background:var(--accent);pointer-events:none}
