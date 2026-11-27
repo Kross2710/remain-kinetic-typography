@@ -4,7 +4,7 @@ import {FPS} from './project.mjs';
 export function moveCue(cues,index,start,duration) {
   const cue=cues[index];
   const delta=start-cue?.start;
-  const end=cues[index+1]?.start ?? duration;
+  const end=Math.min(cues[index+1]?.start ?? duration,duration);
   if (!cue || !Number.isFinite(start) || start<0 || start<=(cues[index-1]?.words.at(-1).start ?? -1) ||
       start>=end || cue.words.at(-1).start+delta>=end) throw Error('Không thể di chuyển dòng qua từ hoặc ranh giới dòng khác.');
   if (delta===0) return cues;
@@ -13,9 +13,10 @@ export function moveCue(cues,index,start,duration) {
 
 export function trimCue(cues,index,boundary,duration) {
   const before=cues[index], next=cues[index+1];
-  const end=cues[index+2]?.start ?? duration;
+  const end=Math.min(cues[index+2]?.start ?? duration,duration);
   if (!before || !next || !Number.isFinite(boundary) || boundary<=before.words.at(-1).start ||
-      boundary>=end || next.words.slice(1).some(w=>w.start<boundary && w.confirmed))
+      boundary>=end || (next.words[0].confirmed && boundary!==next.words[0].start) ||
+      next.words.slice(1).some(w=>w.start<boundary && w.confirmed))
     throw Error('Ranh giới không thể đè lên từ đã canh hoặc dòng kế tiếp.');
   if (boundary===next.start) return cues;
   return cues.map((cue,i)=>i===index+1?{...cue,start:boundary,words:cue.words.map((w,j)=>({...w,start:j===0?boundary:Math.max(boundary,w.start)}))}:cue);

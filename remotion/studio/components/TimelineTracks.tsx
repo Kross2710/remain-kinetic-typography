@@ -40,10 +40,10 @@ export function TimelineTracks({viewport,viewportWidth,view,length,frame,cues,al
   const endCue=(e:PointerEvent<HTMLButtonElement>)=>{
     const active=cueGesture.current;
     if (!active || !e.currentTarget.hasPointerCapture(e.pointerId)) return;
+    if (active.latest!==active.original) onCommit(active.latest);
     cueGesture.current=null;
     suppressClick.current=active.moved;
     setPreview(null);
-    if (active.latest!==active.original) onCommit(active.latest);
   };
   const focusCue=(target:number)=>{
     const el=viewport.current;
@@ -138,11 +138,15 @@ export function TimelineTracks({viewport,viewportWidth,view,length,frame,cues,al
                 aria-current={i===liveLine?'time':undefined} title={`${cue.text} · ${stamp}${status}`}
                 aria-label={`Tua đến dòng ${i+1}: ${cue.text}${status}${selected?' · Đang chọn':''}`} onClick={()=>{if(suppressClick.current){suppressClick.current=false;return;}onPickCue(i);}}
                 onPointerDown={e=>beginCue(e,i)} onPointerMove={moveCuePointer} onPointerUp={endCue}
-                onLostPointerCapture={()=>{cueGesture.current=null;setPreview(null);}}
+                onLostPointerCapture={()=>{
+                  const g=cueGesture.current;
+                  if (g && g.latest!==g.original) onCommit(g.latest);
+                  cueGesture.current=null;setPreview(null);
+                }}
                 data-cue-index={i} onKeyDown={e=>editCueKey(e,i)}
                 onFocus={()=>setFocusedCue(i)} onBlur={()=>setFocusedCue(undefined)} style={{left:x,width}}>
                 {complete && <span className="cue-check" aria-hidden="true">✓ </span>}{cue.text}
-                {displayed[i+1] && <span className="cue-trim-handle" aria-hidden="true" title="Kéo để sửa ranh giới với dòng tiếp"/>}
+                {displayed[i+1] && <span className="cue-trim-handle" aria-hidden="true" title="Kéo để sửa ranh giới với dòng tiếp" style={{pointerEvents:'auto',position:'absolute',right:0,top:0,bottom:0,width:'12px',zIndex:2}}/>}
               </button>;
             })}
           </div>
