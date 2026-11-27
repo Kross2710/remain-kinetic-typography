@@ -30,6 +30,9 @@ footer{justify-content:space-between;min-height:43px;gap:12px;color:var(--muted)
 .lyric-track button[data-selected]{text-decoration:underline;text-underline-offset:3px}
 .lyric-track button:focus-visible{outline-offset:-3px}
 .lyric-track .cue-check{color:#a9dec1;font-weight:bold}
+.lyric-track button{cursor:grab;touch-action:pan-y;padding-right:15px;user-select:none}
+.lyric-track button:active{cursor:grabbing}
+.lyric-track .cue-trim-handle{position:absolute;right:0;top:0;bottom:0;width:12px;border-left:2px solid #d9a771;cursor:ew-resize;touch-action:none}
 /* Keep the editing controls in one desktop viewport; the inspector never sizes these rows. */
 .workspace{display:grid;grid-template-columns:minmax(0,1fr);gap:10px;margin-top:10px}
 .workspace>.timeline{margin-top:0}
