@@ -153,6 +153,32 @@ test('rejects a DNS-rebound Host even when the Origin matches it', async (t) => 
   assert.equal(response.statusCode, 403);
 });
 
+test('scoped listeners preserve local, LAN and Tailscale addresses without a wildcard', async (t) => {
+  const ifaces = networkInterfaces();
+  const lanHost = Object.entries(ifaces).filter(([name])=>name!=='tailscale0').flatMap(([,entries])=>entries)
+    .find(entry=>entry.family==='IPv4' && !entry.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(entry.address))?.address;
+  const tailHost = ifaces.tailscale0?.find(entry=>entry.family==='IPv4')?.address;
+  if (!lanHost && !tailHost) return t.skip('No scoped IPv4 interface present');
+  const base = await studio(t,{bindHost:'interfaces',lanHost,tailHost});
+  const port = new URL(base).port;
+  for (const address of [lanHost,tailHost].filter(Boolean)) {
+    const url = `http://${address}:${port}`;
+    const page = await fetch(url);
+    assert.equal(page.status,200);
+    await page.arrayBuffer();
+    const spoofed = await new Promise((resolve,reject)=>{
+      const req=request(url,{headers:{Host:`127.0.0.1:${port}`}},res=>{res.resume();resolve(res.statusCode);});
+      req.on('error',reject);req.end();
+    });
+    assert.equal(spoofed,403);
+    assert.equal((await fetch(`${url}/api/internal/video/test`)).status,403);
+    assert.equal((await post(url,form(),{Origin:base})).status,403);
+    const jobId = await startJob(url,form(),{Origin:url});
+    assert.equal((await waitForStatus(base,jobId,'done')).status,'done');
+  }
+  assert.equal((await fetch(base)).status,200);
+});
+
 test('LAN opt-in binds all IPv4 interfaces but only trusts the selected local authority', async (t) => {
   const {startStudioServer} = await import('../server.mjs');
   await assert.rejects(startStudioServer({port:0,bindHost:'0.0.0.0'}),/private.*IPv4/i);

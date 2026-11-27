@@ -246,23 +246,34 @@ async function normalizeVideo(video, project, workspace, signal, track) {
 }
 
 export async function startStudioServer({port = process.env.PORT ?? 4317,
-  bindHost = process.env.STUDIO_BIND ?? host, lanHost = process.env.STUDIO_LAN_HOST, render = runRenderer,
+  bindHost = process.env.STUDIO_BIND ?? host, lanHost = process.env.STUDIO_LAN_HOST,
+  tailHost = process.env.STUDIO_TAILSCALE_HOST, render = runRenderer,
   staticRoot = dist, dev = false, outputTtlMs = Number(process.env.STUDIO_RENDER_TTL_MS ?? jobOutputTtlMs),
   trackStorageBytes = maxTrackStorageBytes} = {}) {
   if (!Number.isSafeInteger(trackStorageBytes) || trackStorageBytes <= 0 || trackStorageBytes > maxTrackStorageBytes) {
     throw Error('trackStorageBytes must be a positive integer within the track storage limit.');
   }
   if (!Number.isFinite(outputTtlMs) || outputTtlMs < 0) throw Error('outputTtlMs must be a non-negative number.');
-  if (bindHost !== host && bindHost !== '0.0.0.0') throw Error('STUDIO_BIND must be 127.0.0.1 or 0.0.0.0.');
-  let lanPeers;
-  if (bindHost === '0.0.0.0') {
-    const iface = Object.values(networkInterfaces()).flat().find(n =>
+  const scoped = bindHost === 'interfaces';
+  if (bindHost !== host && bindHost !== '0.0.0.0' && !scoped) throw Error('STUDIO_BIND must be 127.0.0.1, 0.0.0.0, or interfaces.');
+  if (scoped && dev) throw Error('Scoped interfaces require a production Studio build.');
+  const interfaces = networkInterfaces();
+  let lanPeers, tailPeers;
+  if (bindHost === '0.0.0.0' || (scoped && lanHost)) {
+    const iface = Object.values(interfaces).flat().find(n =>
       n.family === 'IPv4' && n.address === lanHost && !n.internal && n.cidr);
     if (!iface || !/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(lanHost)) {
       throw Error('Set STUDIO_LAN_HOST to a private IPv4 address assigned to this machine.');
     }
     lanPeers = new BlockList();
     lanPeers.addSubnet(lanHost, Number(iface.cidr.split('/')[1]), 'ipv4');
+  }
+  if (scoped && tailHost) {
+    tailPeers = new BlockList();
+    tailPeers.addSubnet('100.64.0.0', 10, 'ipv4');
+    if (!interfaces.tailscale0?.some(n => n.family === 'IPv4' && n.address === tailHost) || !tailPeers.check(tailHost, 'ipv4')) {
+      throw Error('Set STUDIO_TAILSCALE_HOST to the IPv4 address assigned to tailscale0.');
+    }
   }
   if (!/^\d+$/.test(String(port)) || Number(port) > 65535) {
     throw new Error('PORT must be an integer from 0 to 65535.');
@@ -275,7 +286,8 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     const permits = address => authority === `${address}:${boundPort}` || (boundPort === 80 && authority === address);
     const loopback = req.socket.remoteAddress === host && req.socket.localAddress === host && (permits(host) || permits('localhost'));
     const lan = lanPeers && req.socket.localAddress === lanHost && permits(lanHost) && lanPeers.check(req.socket.remoteAddress, 'ipv4');
-    return Boolean(loopback || lan);
+    const tailnet = tailPeers && req.socket.localAddress === tailHost && permits(tailHost) && tailPeers.check(req.socket.remoteAddress, 'ipv4');
+    return Boolean(loopback || lan || tailnet);
   };
   app.use((req, res, next) => {
     if (!allowedLocalRequest(req)) return res.status(403).json({error: 'Studio only accepts requests from its configured local network.'});
@@ -481,8 +493,14 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     void runJob(job, {...upload, localPort: req.socket.localPort});
   });
 
-  const server = createServer({headersTimeout: 10_000, requestTimeout: 120_000, connectionsCheckingInterval: 1000}, app);
+  const makeListener = () => createServer({headersTimeout: 10_000, requestTimeout: 120_000, connectionsCheckingInterval: 1000}, app);
+  const server = makeListener();
+  const extraListeners = [];
   server.once('close', () => {
+    for (const listener of extraListeners) {
+      listener.close();
+      listener.closeAllConnections();
+    }
     // A Studio that is going down must not leave Chromium or ffmpeg children of a
     // running job behind, because those jobs no longer have anyone to report to.
     for (const job of jobs.values()) {
@@ -495,10 +513,23 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
   const vite = dev ? await mountStudioVite(app, server, allowedLocalRequest) : null;
   if (!vite) app.use(express.static(staticRoot));
   try {
-    server.listen(Number(port), bindHost);
+    server.listen(Number(port), scoped ? host : bindHost);
     await once(server, 'listening');
+    if (scoped) {
+      const addresses = [lanPeers ? lanHost : null, tailPeers ? tailHost : null].filter(Boolean);
+      for (const address of addresses) {
+        const listener = makeListener();
+        extraListeners.push(listener);
+        listener.listen(server.address().port, address);
+        await once(listener, 'listening');
+      }
+    }
     return server;
   } catch (error) {
+    if (server.listening) {
+      server.close();
+      server.closeAllConnections();
+    }
     await vite?.close();
     throw error;
   }
@@ -658,7 +689,12 @@ if (process.argv[1] && resolve(process.argv[1]) === serverFile) {
     }
     const server = await startStudioServer({dev});
     console.log(`Remain Studio${dev ? ' (dev)' : ''}: http://${host}:${server.address().port}`);
-    if (server.address().address === '0.0.0.0') console.log(`Remain Studio LAN: http://${process.env.STUDIO_LAN_HOST}:${server.address().port}`);
+    if (server.address().address === '0.0.0.0' || process.env.STUDIO_BIND === 'interfaces') {
+      if (process.env.STUDIO_LAN_HOST) console.log(`Remain Studio LAN: http://${process.env.STUDIO_LAN_HOST}:${server.address().port}`);
+      if (process.env.STUDIO_BIND === 'interfaces' && process.env.STUDIO_TAILSCALE_HOST) {
+        console.log(`Remain Studio Tailscale: http://${process.env.STUDIO_TAILSCALE_HOST}:${server.address().port}`);
+      }
+    }
     for (const signum of ['SIGINT', 'SIGTERM']) process.once(signum, () => {
       server.close();
       server.closeAllConnections();
