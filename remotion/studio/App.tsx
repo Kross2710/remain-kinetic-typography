@@ -9,7 +9,7 @@ import {Tabs,TabsContent,TabsList,TabsTrigger} from '@/components/ui/tabs';
 import {LyricSyncPanel} from '@/components/LyricSyncPanel';
 import {EffectsPanel} from '@/components/EffectsPanel';
 import {TimelineTracks} from '@/components/TimelineTracks';
-import {MAX_SECTIONS,PRESETS,type Effect,type SectionKind,type SongSection} from './effects.mjs';
+import {MAX_SECTIONS,PRESETS,PRESET_LABELS,type Effect,type MotionId,type SectionKind,type SongSection} from './effects.mjs';
 import {canRedo,canUndo,clampView,contentWidth,createEditor,createView,cuesToLrc,editorReducer,MAX_PROJECT_FILE_BYTES,parseProjectFile,serializeProject,xToTime,zoomView,type View} from './editor.mjs';
 import {buildSessionRecord,clearSession,forgetJobId,loadSession,openStudioDb,QUOTA_NOTICE,readJobId,rememberJobId,saveSession,storedLengthFrames,type SessionSnapshot} from './session.mjs';
 
@@ -35,7 +35,7 @@ export default function Studio() {
   const [audio,setAudio]=useState<LocalMedia|null>(null);
   const [video,setVideo]=useState<LocalMedia|null>(null);
   const [wide,setWide]=useState(false);
-  const [effect,setEffect]=useState<Effect>(PRESETS.classic);
+  const [effect,setEffect]=useState<Effect>(PRESETS.whisper);
   const [sections,setSections]=useState<SongSection[]>([]);
   const [showSections,setShowSections]=useState(false);
   const [draft,setDraft]=useState(sample);
@@ -296,12 +296,26 @@ export default function Studio() {
   function undo(){if(canUndo(editor))edit({type:'undo'});}
   function redo(){if(canRedo(editor))edit({type:'redo'});}
   function editEffect(value:Effect,scope:'project'|'line') {
-    if(scope==='project')setEffect(value);
-    else if(cue)edit({type:'commit',cues:cues.map((c,i)=>i===line?{...c,effect:value}:c)});
+    if(scope==='project')setEffect({...value,motion:effect.motion});
+    else if(cue && value.preset!=='web-match' && effect.preset!=='web-match')edit({type:'commit',cues:cues.map((c,i)=>i===line?{...c,effect:{...value,motion:undefined}}:c)});
+  }
+  function editMotion(id:MotionId,value:boolean|undefined,scope:'project'|'line') {
+    if(effect.preset==='web-match')return;
+    if(scope==='project')setEffect(previous=>({...previous,motion:{...previous.motion,[id]:value===true}}));
+    else if(cue && id!=='flow'){
+      const motion={...cue.motion};
+      if(value===undefined)delete motion[id];
+      else motion[id]=value;
+      edit({type:'commit',cues:cues.map((c,i)=>i===line?{...c,motion:Object.keys(motion).length?motion:undefined}:c)});
+    }
   }
   function resetLineEffect() {
     if(!cue?.effect)return;
     edit({type:'commit',cues:cues.map((c,i)=>i===line?{...c,effect:undefined}:c)});
+  }
+  function toggleHook() {
+    if(!cue)return;
+    edit({type:'commit',cues:cues.map((c,i)=>i===line?{...c,hook:c.hook?undefined:true}:c)});
   }
   const emphasisIndex=!following && selection?.[0]===line ? selection[1] : -1;
   const emphasisWord=cue?.words[emphasisIndex];
@@ -477,7 +491,7 @@ export default function Studio() {
     sessionRestoring.current=true;
     setSessionSavedAt(null);setSessionQuota(false);
     edit({type:'reset',cues:demoCues});
-    setDraft(sample);setWide(false);setEffect(PRESETS.classic);setSections([]);setShowSections(false);
+    setDraft(sample);setWide(false);setEffect(PRESETS.whisper);setSections([]);setShowSections(false);
     setRenderMode('all');setRangeStart('0');setRangeEnd(null);
     removeMedia('audio');removeMedia('video');
     restoredView.current=null;
@@ -589,7 +603,7 @@ export default function Studio() {
     </header>
     <main className="workspace">
       <section className="viewer min-[781px]:self-start" aria-label="Preview">
-        <div className="section-bar"><h2>Preview</h2><span className="badge">Aurora</span></div>
+        <div className="section-bar"><h2>Preview</h2><span className="badge">{PRESET_LABELS[effect.preset==='web-match'?'web-match':(visibleCues[liveLine]?.effect ?? effect).preset].split(' · ')[0]}</span></div>
         <div className={'stage '+(wide?'wide':'tall')}>
           <Player ref={player} component={Scene} inputProps={inputProps} fps={FPS} durationInFrames={length} compositionWidth={project.width} compositionHeight={project.height} style={{width:'100%',aspectRatio:`${project.width} / ${project.height}`}} controls={false} spaceKeyToPlayOrPause={false} acknowledgeRemotionLicense />
         </div>
@@ -625,8 +639,8 @@ export default function Studio() {
         </section>
           </TabsContent>
           <TabsContent value="effects" forceMount>
-        <EffectsPanel effect={effect} lineLabel={cue?`Dòng ${line+1}: ${cue.text}`:undefined} lineEffect={cue?.effect}
-          onChange={editEffect} onResetLine={resetLineEffect} emphasisWord={emphasisWord?.text} emphasized={emphasisWord?.emphasis===true} onEmphasis={toggleEmphasis}
+        <EffectsPanel effect={effect} lineLabel={cue?`Dòng ${line+1}: ${cue.text}`:undefined} lineEffect={cue?.effect} lineMotion={cue?.motion} onMotion={editMotion}
+          onChange={editEffect} onResetLine={resetLineEffect} hook={cue?.hook} onToggleHook={toggleHook} emphasisWord={emphasisWord?.text} emphasized={emphasisWord?.emphasis===true} onEmphasis={toggleEmphasis}
           sections={sections} showSections={showSections} onShowSections={setShowSections} time={time} onAddSection={addSection}
           onRemoveSection={start=>setSections(previous=>previous.filter(s=>s.start!==start))} onSeekSection={start=>seek(start*FPS)}/>
           </TabsContent>

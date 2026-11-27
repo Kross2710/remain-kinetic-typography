@@ -1,4 +1,4 @@
-import {validateEffect,validateSections} from './effects.mjs';
+import {validateEffect,validateMotion,validateSections} from './effects.mjs';
 
 export const FPS = 30;
 export const DEMO_SECONDS = 30;
@@ -120,7 +120,10 @@ export function validateProject(p) {
     const tokens = parts(c.text);
     if (tokens.length !== c.words.length) throw Error('Số từ không khớp với lời.');
     const end = p.cues[i+1]?.start ?? duration;
-    return {text:tokens.join(' '),start:c.start,...(c.effect===undefined?{}:{effect:validateEffect(c.effect)}),words:c.words.map((w,j) => {
+    if(c.effect?.preset==='web-match') throw Error('Web Match chỉ áp dụng cho toàn bộ project.');
+    if(c.effect?.motion!==undefined)throw Error('Hiệu ứng chuyển động của dòng phải lưu riêng với preset.');
+    if(c.hook!==undefined && typeof c.hook!=='boolean') throw Error('Dấu hook không hợp lệ.');
+    return {text:tokens.join(' '),start:c.start,...(c.motion===undefined?{}:{motion:validateMotion(c.motion,'line')}),...(c.hook===true?{hook:true}:{}),...(c.effect===undefined?{}:{effect:validateEffect(c.effect)}),words:c.words.map((w,j) => {
       if (w?.text !== tokens[j] || !Number.isFinite(w.start) || w.start < c.start || (j > 0 && w.start < c.words[j-1]?.start) || w.start >= end) throw Error('Mốc từ không đúng thứ tự hoặc nằm ngoài dòng.');
       return {text:w.text,start:w.start,...(w.emphasis===true?{emphasis:true}:{})};
     })};

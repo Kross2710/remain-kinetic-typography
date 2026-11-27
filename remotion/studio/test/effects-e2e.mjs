@@ -24,6 +24,8 @@ try {
   const lyrics=page.locator('[data-lyric-preset]');
   const overlay=page.locator('[data-song-section]');
   await slider.fill('45');
+  assert.equal(await lyrics.getAttribute('data-lyric-preset'),'whisper');
+  await preset.selectOption('classic');
   assert.equal(await lyrics.getAttribute('data-lyric-preset'),'classic');
   await preset.selectOption('aurora');
   await scope.selectOption('line');

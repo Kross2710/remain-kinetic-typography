@@ -26,9 +26,26 @@ Mở `http://127.0.0.1:4317`. Chọn nhạc, dán lời (mỗi câu một dòng)
 
 ## Preset chữ và đoạn nhạc
 
-Trong **Hiệu ứng chữ**, chọn **Classic** (kiểu cũ) hoặc **Aurora**. Chỉnh font, cỡ, màu chữ, màu nhấn, thời lượng vào và độ trễ giữa các từ. Mặc định áp vào toàn project; chuyển sang **Dòng đang chọn** để tạo kiểu riêng, hoặc bấm **Dùng kiểu mặc định** để bỏ kiểu riêng. Chọn một từ trong panel canh lời trước khi bật nhấn từ.
+Trong **Hiệu ứng chữ**, chọn **Whisper**, **Classic** (kiểu cũ) hoặc **Aurora**. **Whisper** là mặc định cho project mới; project đã lưu giữ nguyên kiểu cũ. Whisper có nền trôi nhẹ, vignette và grain; dòng đang hát trôi nhẹ, tối đa hai dòng trước thu nhỏ và mờ dần. Chọn một dòng rồi bấm **Đánh dấu hook** để chữ của riêng dòng đó thấm vào theo từng ký tự khi dùng Whisper. Chỉnh font, cỡ, màu chữ, màu nhấn, thời lượng vào và độ trễ giữa các từ. Mặc định áp vào toàn project; chuyển sang **Dòng đang chọn** để tạo kiểu riêng, hoặc bấm **Dùng kiểu mặc định** để bỏ kiểu riêng. Chọn một từ trong panel canh lời trước khi bật nhấn từ.
 
 **Hiện thanh Verse/Chorus trong video** mặc định tắt. Khi bật, tua tới đầu đoạn, chọn loại đoạn rồi thêm mốc tại playhead. Mỗi đoạn kéo dài tới mốc kế tiếp hoặc hết timeline. Tắt thanh không xóa mốc; project JSON lưu cả preset, kiểu riêng, nhấn từ và các mốc đoạn nhạc.
+
+### Hiệu ứng dùng chung
+
+Chọn **Classic**, **Aurora** hoặc **Whisper**, rồi bật từng mục trong **Hiệu ứng → Hiệu ứng dùng chung**:
+
+- **Trồi lên và rõ dần:** cả dòng rõ dần, từng từ trượt lên qua khung che.
+- **Karaoke:** chữ đổi từ màu chữ sang màu nhấn lần lượt theo từng ký tự, dựa trên mốc từ.
+- **Hook thấm mực:** áp dụng cho dòng được đánh dấu hook (hoặc hook gốc *I will remain*); nó thay hiệu ứng vào chữ của dòng. Trong hook, từ *love* hiện đúng mốc hát.
+- **Cuộn cột lời:** đưa câu đang hát tới 58% chiều cao khung; các câu cũ đi lên, nhỏ và mờ dần. Tùy chọn này chỉ đặt ở cấp project.
+
+Ba hiệu ứng chữ có thể **Bật**, **Tắt** hoặc **Theo project** cho từng dòng mà không đổi preset của dòng đó. Các tùy chọn đi cùng project JSON và giữ nguyên khi chuyển preset. **Web Match** vẫn giữ bản gốc và không áp thêm các tùy chọn này.
+
+### Web Match
+
+Trong **Hiệu ứng → Toàn bộ project**, chọn **Web Match**. Preset dùng chính CSS, GSAP và luồng chữ của `index.html` trong một khung riêng; Whisper, Aurora và Classic không đổi. Dùng cùng video, nhạc và timing lời để so với bản web. Khung ngang dùng bố cục desktop; khung dọc dùng bố cục mobile. Font được đóng gói trong Studio, không cần gọi Google Fonts khi xuất.
+
+Web Match dùng cả cột lời để cuộn, nên tạm bỏ qua kiểu riêng từng dòng (không xoá chúng). Các dòng có cụm *I will remain* dùng hook giống bản web; với lời khác, dùng **Đánh dấu hook** nếu muốn kiểu chữ nghiêng và vào từng ký tự. Bật **Hiện thanh Verse/Chorus trong video** nếu muốn thêm thanh tiến độ và nhãn đoạn như trên web. Nếu chưa đặt mốc đoạn, preset dùng các mốc gốc của bản web.
 
 ## Dev mode: không cần build lại khi sửa frontend
 
@@ -79,4 +96,9 @@ npm run studio:e2e
 npm run studio:e2e:workspace
 npm run studio:e2e:media
 npm run studio:gpu   # render thật 2 lần (CPU và iGPU) rồi so khung hình
+node studio/test/whisper-live.mjs   # Studio riêng: so preview và MP4 trên clip Remain cố định
+node studio/test/shared-motion-live.mjs # phối hiệu ứng, lưu/nạp và xuất MP4
+node studio/test/web-match-live.mjs # so index.html, Studio và MP4 cùng khung hình
 ```
+
+Khi sửa mã hoặc CSS của public player, chạy `node studio/update-web-match-assets.mjs` từ `remotion/` để cập nhật snapshot Web Match. `studio:check` kiểm tra các byte trong snapshot còn khớp với mã nguồn.

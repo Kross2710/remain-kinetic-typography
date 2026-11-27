@@ -1,12 +1,12 @@
 import {useState} from 'react';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
-import {PRESETS,SECTION_LABELS,MAX_SECTIONS,type Effect,type Preset,type SectionKind,type SongSection} from '../effects.mjs';
-
-const presets:Record<Preset,string>={classic:'Classic · kiểu cũ',aurora:'Aurora · chữ lên theo nhịp'};
+import {PRESETS,SECTION_LABELS,MAX_SECTIONS,PRESET_LABELS,MOTION_LIBRARY,type MotionId,type LineMotionSettings,type Effect,type Preset,type SectionKind,type SongSection} from '../effects.mjs';
 
 type Props={
   effect:Effect; lineLabel?:string; lineEffect?:Effect; onChange:(effect:Effect,scope:'project'|'line')=>void; onResetLine:()=>void;
+  lineMotion?:LineMotionSettings; onMotion:(id:MotionId,value:boolean|undefined,scope:'project'|'line')=>void;
+  hook?:boolean; onToggleHook:()=>void;
   emphasisWord?:string; emphasized:boolean; onEmphasis:()=>void;
   sections:SongSection[]; showSections:boolean; onShowSections:(value:boolean)=>void;
   time:number; onAddSection:(kind:SectionKind)=>void; onRemoveSection:(start:number)=>void; onSeekSection:(start:number)=>void;
@@ -15,7 +15,8 @@ type Props={
 export function EffectsPanel(p:Props) {
   const [scope,setScope]=useState<'project'|'line'>('project');
   const [kind,setKind]=useState<SectionKind>('verse');
-  const activeScope=p.lineLabel?scope:'project';
+  const webMatch=p.effect.preset==='web-match';
+  const activeScope=p.lineLabel&&!webMatch?scope:'project';
   const effect=activeScope==='line'?(p.lineEffect ?? p.effect):p.effect;
   const field=<K extends keyof Effect>(key:K,value:Effect[K])=>p.onChange({...effect,[key]:value},activeScope);
   const nextSection=p.sections.findIndex(s=>s.start>p.time);
@@ -24,15 +25,16 @@ export function EffectsPanel(p:Props) {
   return <section className="panel min-w-0" aria-labelledby="effects-title">
     <div className="section-bar"><h2 id="effects-title">Hiệu ứng chữ</h2></div>
     <label className="grid gap-1">Phạm vi hiệu ứng<select value={activeScope} onChange={e=>setScope(e.target.value as 'project'|'line')}>
-      <option value="project">Toàn bộ project</option><option value="line" disabled={!p.lineLabel}>Dòng đang chọn</option>
+      <option value="project">Toàn bộ project</option><option value="line" disabled={!p.lineLabel||webMatch}>Dòng đang chọn</option>
     </select></label>
     {activeScope==='line' && <div className="grid gap-1.5">
       <p className="hint wrap-anywhere">{p.lineLabel} · {p.lineEffect?'Kiểu riêng':'Đang dùng kiểu mặc định'}</p>
       <Button type="button" variant="outline" size="sm" disabled={!p.lineEffect} onClick={p.onResetLine}>Dùng kiểu mặc định</Button>
     </div>}
     <label className="grid gap-1">Preset chữ<select value={effect.preset} onChange={e=>p.onChange({...PRESETS[e.target.value as Preset]},activeScope)}>
-      {Object.entries(presets).map(([id,label])=><option key={id} value={id}>{label}</option>)}
+      {Object.entries(PRESET_LABELS).map(([id,label])=><option key={id} value={id} disabled={id==='web-match'&&activeScope==='line'}>{label}</option>)}
     </select></label>
+    {webMatch?<p className="hint">Dùng font, màu và chuyển động từ bản web. Bỏ qua kiểu riêng từng dòng, không xoá thiết lập đã lưu.</p>:<>
     <div className="grid min-w-0 grid-cols-2 gap-2">
       <label className="grid min-w-0 gap-1">Font chữ<select value={effect.font} onChange={e=>field('font',e.target.value as Effect['font'])}><option value="serif">Serif</option><option value="sans">Sans-serif</option><option value="mono">Monospace</option></select></label>
       <label className="grid min-w-0 gap-1">Cỡ chữ ({Math.round(effect.size*100)}%)<input type="range" min="50" max="150" step="5" value={Math.round(effect.size*100)} onChange={e=>field('size',Number(e.target.value)/100)}/></label>
@@ -43,6 +45,25 @@ export function EffectsPanel(p:Props) {
     </div>
     <Button type="button" variant="outline" aria-pressed={p.emphasized} disabled={!p.emphasisWord} onClick={p.onEmphasis} className="h-auto min-h-[44px] whitespace-normal wrap-anywhere">
       {p.emphasisWord?`${p.emphasized?'Bỏ nhấn':'Nhấn từ'}: ${p.emphasisWord}`:'Chọn từ trong mục Canh từng từ để nhấn'}
+    </Button>
+    <fieldset className="grid gap-1.5 rounded-lg border border-border px-2.5 pb-2.5">
+      <legend className="px-1 font-medium">Hiệu ứng dùng chung</legend>
+      {(Object.keys(MOTION_LIBRARY) as MotionId[]).map(id=>{
+        const entry=MOTION_LIBRARY[id];
+        if(activeScope==='project')return <label key={id} className="flex min-h-[44px] items-center gap-2">
+          <input type="checkbox" checked={p.effect.motion?.[id]===true} onChange={e=>p.onMotion(id,e.target.checked,'project')}/>{entry.label}
+        </label>;
+        if(id==='flow')return null;
+        const current=p.lineMotion?.[id];
+        return <label key={id} className="grid gap-1">{entry.label}<select value={current===undefined?'inherit':current?'on':'off'} onChange={e=>p.onMotion(id,e.target.value==='inherit'?undefined:e.target.value==='on','line')}>
+          <option value="inherit">Theo project ({p.effect.motion?.[id]?'bật':'tắt'})</option><option value="on">Bật cho dòng này</option><option value="off">Tắt cho dòng này</option>
+        </select></label>;
+      })}
+      <p className="hint">Hiệu ứng dùng được với Classic, Aurora và Whisper. Thấm mực thay hiệu ứng vào chữ trên dòng hook.</p>
+    </fieldset>
+    </>}
+    <Button type="button" variant="outline" aria-pressed={p.hook===true} disabled={!p.lineLabel} onClick={p.onToggleHook} className="h-auto min-h-[44px] whitespace-normal">
+      {p.hook?'Bỏ dấu hook':'Đánh dấu hook'}
     </Button>
     <div className="mt-2 grid min-w-0 gap-2 border-t border-border pt-2">
       <label className="flex min-h-[44px] items-center gap-2"><input type="checkbox" checked={p.showSections} onChange={e=>p.onShowSections(e.target.checked)}/>Hiện thanh Verse/Chorus trong video</label>
