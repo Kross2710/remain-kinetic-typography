@@ -21,17 +21,23 @@ try {
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto(base);
   await page.getByRole('heading',{name:'Remain Studio'}).waitFor();
+  const openTab = name => page.getByRole('tab',{name,exact:true}).click();
+  await openTab('Media');
   await page.locator('#audio-file').setInputFiles(audio);
   await page.locator('.filename').getByText('own-audio.mp3',{exact:true}).waitFor();
+  await openTab('Lời');
   await page.locator('#lyrics').fill('[00:00.00]Một hai ba bốn\n[00:03.00]Chữ chuyển động\n[00:25.00]Hẹn gặp lại');
   await page.getByRole('button',{name:'Áp dụng lời'}).click();
+  await openTab('Canh từ');
   const slider=page.getByRole('slider',{name:'Vị trí timeline'});
+  const syncTabPanel=page.getByRole('tabpanel',{name:'Canh từ'});
   async function seek(seconds) {
     await slider.fill(String(seconds*30));
     await page.waitForFunction(s=>Math.abs(Number(document.querySelector('#timeline').value) - s*30)<=1,seconds);
   }
   await page.getByRole('button',{name:'hai',exact:false}).filter({has:page.locator('small')}).click();
   await seek(.7);
+  await syncTabPanel.focus();
   await page.keyboard.press('t');
   await page.getByRole('button',{name:'hai 0.70s'}).waitFor({timeout:3000});
   await seek(4);
@@ -39,7 +45,7 @@ try {
   await seek(1);
   await page.locator('[data-word-active="true"]').getByText('hai',{exact:true}).waitFor();
   await page.getByRole('button',{name:'Phát',exact:true}).click();
-  const tapPanel=page.locator('.panel').filter({has:page.getByRole('heading',{name:'03 · Canh từng từ',exact:true})});
+  const tapPanel=page.locator('.panel').filter({has:page.getByRole('heading',{name:'Canh từng từ',exact:true})});
   assert.equal(await tapPanel.evaluate(el=>el===document.activeElement),true,'Clicking Play should hand focus to the lyric timing panel');
   await page.keyboard.down('Space');
   await page.getByRole('button',{name:/^bốn /,pressed:true}).waitFor({timeout:3000});
@@ -50,14 +56,18 @@ try {
   await page.getByRole('button',{name:'Tạm dừng',exact:true}).click();
   const shorter = join(dir,'short-track.mp3');
   execFileSync('ffmpeg',['-v','error','-f','lavfi','-i','sine=frequency=330:duration=2','-y',shorter]);
+  await openTab('Media');
   await page.locator('#audio-file').setInputFiles(shorter);
   await page.locator('.filename').getByText('short-track.mp3',{exact:true}).waitFor();
   assert.equal(await page.locator('#cue-picker option').count(),3);
   assert.equal(await page.locator('.track button').count(),1);
+  await openTab('Canh từ');
   await page.getByRole('button',{name:'hai 0.70s'}).waitFor();
+  await openTab('Media');
   await page.locator('#audio-file').setInputFiles(audio);
   await page.locator('.filename').getByText('own-audio.mp3',{exact:true}).waitFor();
   assert.equal(await page.locator('.track button').count(),3);
+  await openTab('Canh từ');
   await page.getByRole('button',{name:'hai 0.70s'}).waitFor();
   // The next word was estimated at 10.33s; marking the first at 12s should still work.
   await page.locator('#cue-picker').selectOption('1');
@@ -79,26 +89,31 @@ try {
   assert.ok(Number(nextLineStart)>=3.2 && Number(nextLineStart)<12,'Tap must retime the next line without waiting for its estimated start');
   await page.getByRole('button',{name:'Tạm dừng',exact:true}).click();
   const lyrics = page.locator('#lyrics');
+  await openTab('Lời');
   const oldLyrics = await lyrics.inputValue();
   await lyrics.focus();
   await lyrics.evaluate(el=>el.setSelectionRange(el.value.length,el.value.length));
   await page.keyboard.press('t');
   assert.equal(await lyrics.inputValue(),oldLyrics+'t');
+  await openTab('Canh từ');
   await page.getByRole('button',{name:/^chuyển /,pressed:true}).waitFor({timeout:3000});
   const linePicker = page.locator('#cue-picker');
   await linePicker.selectOption('2');
-  await linePicker.focus();
+  await syncTabPanel.focus();
   await page.keyboard.press('t');
   await page.getByRole('button',{name:/^gặp /,pressed:true}).waitFor({timeout:3000});
   await seek(25.4);
+  await syncTabPanel.focus();
   await page.keyboard.press('t');
   await page.getByRole('button',{name:/^lại /,pressed:true}).waitFor({timeout:3000});
   await seek(26);
+  await syncTabPanel.focus();
   await page.keyboard.press('t');
   await tapPanel.getByText('Đã tới cuối lời', {exact:true}).waitFor({timeout:3000});
   const lastWord=tapPanel.getByRole('button',{name:/^lại /});
   const finalStamp=await lastWord.innerText();
   await seek(27);
+  await syncTabPanel.focus();
   await page.keyboard.press('t');
   assert.equal(await lastWord.innerText(),finalStamp);
 
@@ -109,8 +124,10 @@ try {
   assert.equal(await redoButton.isEnabled(), false, 'Nothing has been undone yet');
   const stampedWord = tapPanel.getByRole('button', {name: /^lại /});
   const stampedText = await stampedWord.innerText();
+  await openTab('Lời');
   await lyrics.focus();
   await page.keyboard.press('Control+z');
+  await openTab('Canh từ');
   assert.equal(await stampedWord.innerText(), stampedText, 'Ctrl+Z typed in the lyrics field stays a text undo');
   await page.getByRole('button', {name: 'Vừa khung'}).focus();
   await page.keyboard.press('Control+z');
@@ -132,20 +149,26 @@ try {
 
   // Project file: save the editing session, wipe it, load it back.
   const savedPath = join(dir, 'project.json');
+  await openTab('Project');
   const projectDownload = page.waitForEvent('download', {timeout: 15000});
   await page.getByRole('button', {name: 'Lưu project', exact: true}).click();
   await (await projectDownload).saveAs(savedPath);
   const saved = JSON.parse(await readFile(savedPath, 'utf8'));
   assert.deepEqual([saved.version, saved.cues.length, saved.width, saved.height], [1, 3, 720, 1280]);
   assert.ok(saved.cues[0].words.some(w => w.confirmed), 'A saved project must keep the locked word marks');
+  await openTab('Lời');
   await lyrics.fill('[00:00.00]Một dòng mới');
   await page.getByRole('button', {name: 'Áp dụng lời'}).click();
   assert.equal(await page.locator('.track button').count(), 1);
+  await openTab('Project');
   await page.locator('#project-file').setInputFiles(savedPath);
   await page.getByText('Đã nạp project.json').waitFor({timeout: 5000});
   assert.equal(await page.locator('.track button').count(), 3);
+  await openTab('Canh từ');
   await page.getByRole('button', {name: 'hai 0.70s'}).waitFor({timeout: 3000});
+  await openTab('Lời');
   assert.match(await lyrics.inputValue(), /^\[00:00\.00\]/, 'A loaded project must refill the lyrics editor');
+  await openTab('Canh từ');
 
   if (process.env.STUDIO_SCREENSHOT) await page.screenshot({path:process.env.STUDIO_SCREENSHOT});
   if (!process.env.STUDIO_PREVIEW_ONLY) {

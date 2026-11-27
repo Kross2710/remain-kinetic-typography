@@ -18,6 +18,7 @@ try {
   await page.goto(base);
   await page.getByRole('button', {name: 'Xuất MP4', exact: true}).waitFor();
 
+  await page.getByRole('tab',{name:'Lời',exact:true}).click();
   await page.locator('#lyrics').fill('Một nhịp thở');
   await page.getByRole('button', {name: 'Áp dụng lời'}).click();
   await page.getByLabel('Phạm vi xuất').selectOption('range');

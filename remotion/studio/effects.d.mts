@@ -1,0 +1,11 @@
+export type Preset = 'classic'|'aurora';
+export type Font = 'serif'|'sans'|'mono';
+export type Effect = {preset:Preset;font:Font;size:number;color:string;accent:string;entry:number;stagger:number};
+export type SectionKind = 'intro'|'verse'|'chorus'|'bridge'|'outro';
+export type SongSection = {start:number;kind:SectionKind};
+export const PRESETS:Readonly<Record<Preset,Readonly<Effect>>>;
+export const FONT_STACKS:Readonly<Record<Font,string>>;
+export const SECTION_LABELS:Readonly<Record<SectionKind,string>>;
+export const MAX_SECTIONS:number;
+export function validateEffect(value:unknown):Effect;
+export function validateSections(value:unknown,maxSeconds:number):SongSection[];

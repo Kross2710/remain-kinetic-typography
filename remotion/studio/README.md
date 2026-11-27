@@ -21,7 +21,14 @@ Mở `http://127.0.0.1:4317`. Chọn nhạc, dán lời (mỗi câu một dòng)
 - Trong **Thiết lập xuất**, chọn **Toàn bộ timeline** hoặc **Một đoạn**, rồi nhập mốc đầu/cuối theo giây hoặc lấy mốc từ playhead. Việc chọn đoạn chỉ ảnh hưởng file xuất, không xoá nội dung khỏi project.
 - Không còn giới hạn 30 giây cho nhạc. Giới hạn bảo vệ host: timeline tối đa 2 giờ, file nhạc 25 MiB, file video 100 MiB. Video nên dùng MP4 (H.264) hoặc WebM mà trình duyệt đọc được.
 - Preview và export dùng cùng một composition. Khi bấm **Xuất MP4**, file nhạc/video được gửi tới máy chạy Studio để render; preview không gửi file. Server mặc định chỉ bind loopback, chạy một job mỗi lần. Không expose endpoint render ra Internet: chưa có tài khoản, quota hay hàng đợi dùng chung.
-- Chưa có project save/load, nhiều lớp video, waveform, tự căn lời hoặc render trực tiếp bên trong trình duyệt.
+- Inspector có 5 tab. Dùng **Media** để nạp tệp, **Lời** để nhập lời, rồi quay về **Canh từ**. Đổi tab không reset bản nháp hay playhead. Trên desktop, timeline nằm ngay dưới Preview; bấm cue để chọn dòng/tua đến mốc và xem dấu ✓ khi đã canh hết từ.
+- Tab **Project** lưu/nạp JSON; nhạc và video cần được chọn lại khi mở file. Chưa hỗ trợ nhiều lớp video, waveform, tự căn lời hoặc render trực tiếp bên trong trình duyệt.
+
+## Preset chữ và đoạn nhạc
+
+Trong **Hiệu ứng chữ**, chọn **Classic** (kiểu cũ) hoặc **Aurora**. Chỉnh font, cỡ, màu chữ, màu nhấn, thời lượng vào và độ trễ giữa các từ. Mặc định áp vào toàn project; chuyển sang **Dòng đang chọn** để tạo kiểu riêng, hoặc bấm **Dùng kiểu mặc định** để bỏ kiểu riêng. Chọn một từ trong panel canh lời trước khi bật nhấn từ.
+
+**Hiện thanh Verse/Chorus trong video** mặc định tắt. Khi bật, tua tới đầu đoạn, chọn loại đoạn rồi thêm mốc tại playhead. Mỗi đoạn kéo dài tới mốc kế tiếp hoặc hết timeline. Tắt thanh không xóa mốc; project JSON lưu cả preset, kiểu riêng, nhấn từ và các mốc đoạn nhạc.
 
 ## Dev mode: không cần build lại khi sửa frontend
 
@@ -55,5 +62,6 @@ sudo ufw allow from 192.168.1.0/24 to 192.168.1.215 port 4317 proto tcp
 npm run studio:check
 # Chạy server như trên ở terminal khác; kiểm thử E2E cần ffmpeg và ffprobe trong PATH.
 npm run studio:e2e
+npm run studio:e2e:workspace
 npm run studio:e2e:media
 ```

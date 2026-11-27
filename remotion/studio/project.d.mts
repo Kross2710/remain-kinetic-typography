@@ -1,7 +1,8 @@
-export type Word = {text:string; start:number; confirmed?:boolean};
-export type Cue = {text:string; start:number; words:Word[]};
+import type {Effect,SongSection} from './effects.mjs';
+export type Word = {text:string; start:number; confirmed?:boolean; emphasis?:boolean};
+export type Cue = {text:string; start:number; words:Word[]; effect?:Effect};
 export type RenderRange = {startFrame:number; endFrame:number};
-export type Project = {width:number; height:number; durationInFrames:number; cues:Cue[]; videoDurationInFrames?:number; renderRange?:RenderRange};
+export type Project = {width:number; height:number; durationInFrames:number; cues:Cue[]; videoDurationInFrames?:number; renderRange?:RenderRange; effect?:Effect; sections?:SongSection[]; showSections?:boolean};
 export const FPS:number;
 export const MAX_SECONDS:number;
 export const DEMO_SECONDS:number;

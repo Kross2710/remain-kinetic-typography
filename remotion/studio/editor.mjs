@@ -118,6 +118,9 @@ export function serializeProject({project, renderRange, media}) {
     durationInFrames: clean.durationInFrames,
     cues: preserveConfirmed(clean.cues, project.cues),
   };
+  if (clean.effect !== undefined) file.effect=clean.effect;
+  if (clean.sections !== undefined) file.sections=clean.sections;
+  if (clean.showSections) file.showSections=true;
   if (clean.videoDurationInFrames !== undefined) file.videoDurationInFrames = clean.videoDurationInFrames;
   if (clean.renderRange !== undefined) file.renderRange = clean.renderRange;
   // Media bytes cannot live in JSON (the editor holds object URLs), so the

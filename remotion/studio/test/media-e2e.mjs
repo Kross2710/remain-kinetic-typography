@@ -21,6 +21,7 @@ try {
   const errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto(base);
+  const openTab = name => page.getByRole('tab',{name,exact:true}).click();
   const exportButton=page.getByRole('button',{name:'Xuất MP4',exact:true});
   assert.equal(await exportButton.getAttribute('data-slot'),'button');
   assert.equal(await page.locator('#lyrics').getAttribute('data-slot'),'textarea');
@@ -30,6 +31,7 @@ try {
   assert.equal(await workspace.evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length),2);
   assert.equal(await page.getByLabel('Mốc đầu dòng (giây)').evaluate(el=>getComputedStyle(el.parentElement).display),'flex');
   assert.equal(await exportButton.evaluate(el=>getComputedStyle(el).backgroundColor),'rgb(240, 177, 92)');
+  await openTab('Media');
   await page.locator('#audio-file').setInputFiles(audio);
   await page.locator('.filename').getByText('long-track.mp3',{exact:true}).waitFor();
   const slider=page.getByRole('slider',{name:'Vị trí timeline'});
@@ -39,9 +41,15 @@ try {
   await page.locator('.stage video').waitFor();
   assert.equal(await page.locator('.stage video').evaluate(el=>el.muted),true,'External audio replaces the video soundtrack');
   assert.equal(await slider.getAttribute('max'),'959');
+  await openTab('Lời');
   await page.locator('#lyrics').fill('[00:03.00]Cảnh màu xanh\n[00:05.00]Câu tiếp theo\n[00:31.00]Sau ba mươi giây');
   await page.getByRole('button',{name:'Áp dụng lời'}).click();
-  const sync=page.getByRole('region',{name:'03 · Canh từng từ'});
+  await openTab('Canh từ');
+  await page.evaluate(()=>window.scrollTo(0,0));
+  const playback=page.getByRole('button',{name:'Phát',exact:true});
+  const transportBox=await playback.boundingBox();
+  assert.ok(transportBox.y+transportBox.height<=900,'Desktop transport must stay visible next to an expanded inspector');
+  const sync=page.getByRole('region',{name:'Canh từng từ'});
   const follow=sync.getByRole('button',{name:'Theo video',exact:true});
   assert.equal(await follow.getAttribute('aria-pressed'),'true');
   await slider.fill('933');
@@ -54,6 +62,13 @@ try {
   await slider.fill('933');
   await sync.getByRole('button',{name:/^Cảnh /,pressed:true}).waitFor();
   assert.equal(await follow.getAttribute('aria-pressed'),'false');
+  await sync.getByText('Sắp chấm: Cảnh', {exact:true}).waitFor({timeout:2500});
+  await sync.getByRole('button',{name:'Nghe lại dòng',exact:true}).click();
+  await page.waitForFunction(()=>Math.abs(document.querySelector('.stage video')?.currentTime-2.7)<.15);
+  await sync.getByRole('button',{name:/^Cảnh /,pressed:true}).waitFor();
+  assert.equal(await follow.getAttribute('aria-pressed'),'false');
+  await page.getByRole('button',{name:'Tạm dừng',exact:true}).click();
+  await slider.fill('933');
   await follow.click();
   await sync.locator('[aria-current="time"]').getByText('Sau',{exact:true}).waitFor();
   await slider.fill('141');
@@ -78,6 +93,7 @@ try {
   assert.equal(await page.getByRole('button',{name:'Xuất MP4',exact:true}).isDisabled(),true);
   await page.getByLabel('Kết thúc (giây)').fill('5');
   if (!process.env.STUDIO_PREVIEW_ONLY) {
+    await openTab('Media');
     await page.getByRole('button',{name:'Gỡ nhạc'}).click();
     assert.equal(await slider.getAttribute('max'),'179');
     assert.equal(await page.locator('.stage video').evaluate(el=>el.muted),false);
@@ -115,9 +131,11 @@ try {
   await page.evaluate(()=>document.getAnimations().forEach(animation=>animation.finish()));
   assert.equal(await workspace.evaluate(el=>getComputedStyle(el).gridTemplateColumns.split(' ').length),1);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
+  await openTab('Canh từ');
   const markButton=sync.getByRole('button',{name:'Đóng dấu từ',exact:true});
   assert.ok((await markButton.boundingBox()).height>=44);
-  assert.ok((await sync.boundingBox()).y<(await page.getByRole('heading',{name:'01 · Media'}).boundingBox()).y);
+  assert.equal(await page.getByRole('tab',{name:'Canh từ',selected:true}).count(),1);
+  assert.equal(await page.getByRole('tabpanel').count(),1);
   await page.setViewportSize({width:320,height:740});
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));
   console.log('Video-follow highlighting/seek, locked timing, video loading and 320px responsive layout verified.');

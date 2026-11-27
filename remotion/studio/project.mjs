@@ -1,3 +1,5 @@
+import {validateEffect,validateSections} from './effects.mjs';
+
 export const FPS = 30;
 export const DEMO_SECONDS = 30;
 export const MAX_SECONDS = 7200;
@@ -86,7 +88,7 @@ export function setCueStart(cues, line, start, duration) {
   start = round(start);
   const end = cues[line+1]?.start ?? duration;
   if (!c || !Number.isFinite(start) || start < 0 || start <= (cues[line-1]?.start ?? -1) || start >= end || (line > 0 && cues[line-1].words.at(-1).start >= start)) throw Error('Mốc dòng phải sau các từ ở dòng trước và trước dòng sau.');
-  return cues.map((c,i) => i === line ? {...c,start,words:distribute(c.text,start,end)} : c);
+  return cues.map((c,i) => i === line ? {...c,start,words:distribute(c.text,start,end).map((w,j)=>c.words[j].emphasis?{...w,emphasis:true}:w)} : c);
 }
 
 export function activeAt(cues, time) {
@@ -118,9 +120,9 @@ export function validateProject(p) {
     const tokens = parts(c.text);
     if (tokens.length !== c.words.length) throw Error('Số từ không khớp với lời.');
     const end = p.cues[i+1]?.start ?? duration;
-    return {text:tokens.join(' '),start:c.start,words:c.words.map((w,j) => {
+    return {text:tokens.join(' '),start:c.start,...(c.effect===undefined?{}:{effect:validateEffect(c.effect)}),words:c.words.map((w,j) => {
       if (w?.text !== tokens[j] || !Number.isFinite(w.start) || w.start < c.start || (j > 0 && w.start < c.words[j-1]?.start) || w.start >= end) throw Error('Mốc từ không đúng thứ tự hoặc nằm ngoài dòng.');
-      return {text:w.text,start:w.start};
+      return {text:w.text,start:w.start,...(w.emphasis===true?{emphasis:true}:{})};
     })};
   });
   const clean={width:p.width,height:p.height,durationInFrames:p.durationInFrames,cues};
@@ -128,6 +130,9 @@ export function validateProject(p) {
     if (!Number.isInteger(p.videoDurationInFrames) || p.videoDurationInFrames<1 || p.videoDurationInFrames>p.durationInFrames) throw Error('Thời lượng lớp video không hợp lệ.');
     clean.videoDurationInFrames=p.videoDurationInFrames;
   }
+  if (p.effect !== undefined) clean.effect=validateEffect(p.effect);
+  if (p.sections !== undefined) clean.sections=validateSections(p.sections,MAX_SECONDS);
+  if (p.showSections === true) clean.showSections=true;
   if (p.renderRange !== undefined) clean.renderRange=validateRange(p.renderRange,p.durationInFrames);
   return clean;
 }

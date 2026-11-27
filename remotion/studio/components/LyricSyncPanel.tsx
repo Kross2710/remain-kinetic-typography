@@ -16,6 +16,9 @@ type Props = {
   following: boolean;
   complete: boolean;
   canTap: boolean;
+  targetText?: string;
+  canReplay: boolean;
+  onReplay: () => void;
   onFollow: () => void;
   onMarkMode: () => void;
   onLine: (line:number) => void;
@@ -26,7 +29,7 @@ type Props = {
 
 const seconds = (value:number) => `${value.toFixed(2)}s`;
 
-export function LyricSyncPanel({panelRef,cues,line,selectedWord,liveLine,liveWord,time,playing,following,complete,canTap,onFollow,onMarkMode,onLine,onWord,onLineStart,onTap}:Props) {
+export function LyricSyncPanel({panelRef,cues,line,selectedWord,liveLine,liveWord,time,playing,following,complete,canTap,targetText,canReplay,onReplay,onFollow,onMarkMode,onLine,onWord,onLineStart,onTap}:Props) {
   const wordsViewport=useRef<HTMLDivElement>(null);
   const cue=cues[line];
   const current=cues[liveLine];
@@ -45,7 +48,7 @@ export function LyricSyncPanel({panelRef,cues,line,selectedWord,liveLine,liveWor
 
   return <section className="panel sync-panel min-w-0 gap-2.5!" ref={panelRef} tabIndex={-1} aria-labelledby="tap-panel-title">
     <div className="section-bar">
-      <h2 id="tap-panel-title">03 · Canh từng từ</h2>
+      <h2 id="tap-panel-title">Canh từng từ</h2>
       <span className="rounded-sm border border-border px-2 py-1 text-xs tabular-nums text-muted-foreground" aria-label="Vị trí phát hiện tại">{seconds(time)}</span>
     </div>
 
@@ -68,9 +71,17 @@ export function LyricSyncPanel({panelRef,cues,line,selectedWord,liveLine,liveWor
         </p>
       </div>
 
-      <Button type="button" className="tap min-h-[44px] min-[781px]:min-h-11 w-full justify-self-stretch!" aria-keyshortcuts="Space T" disabled={!canTap} onClick={onTap}>
-        Đóng dấu từ <kbd aria-hidden="true" className="rounded-sm border border-current/40 px-1.5 py-0.5 text-xs">Space / T</kbd>
-      </Button>
+      <div className="grid min-w-0 gap-2 rounded-md border border-border bg-background p-2.5">
+        <p className="min-h-5 wrap-anywhere text-sm text-muted-foreground">
+          {targetText ? <>Sắp chấm: <strong className="font-semibold text-primary">{targetText}</strong></> : 'Chưa có từ cần chấm'}
+        </p>
+        <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-1.5">
+          <Button type="button" className="tap min-h-[44px] h-auto min-w-0 justify-self-stretch! px-2 whitespace-normal" aria-keyshortcuts="Space T" disabled={!canTap} onClick={onTap}>
+            Đóng dấu từ
+          </Button>
+          <Button type="button" variant="outline" className="min-h-[44px] px-2.5" disabled={!canReplay} onClick={onReplay}>Nghe lại dòng</Button>
+        </div>
+      </div>
       <p className="hint" role={complete?'status':undefined}>{complete?'Đã tới cuối lời':following?(canTap?'Bấm Space/T để bắt đầu canh từ chưa chấm.':'Dòng này đã canh xong. Chọn từ để sửa mốc.'):'Đã giữ từ đang chấm. Bấm Theo video để bám lại vị trí phát.'}</p>
 
       <div className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-1.5">

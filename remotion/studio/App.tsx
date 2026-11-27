@@ -5,7 +5,10 @@ import {activeAt,clipCues,DEMO_SECONDS,FPS,importLyrics,MAX_AUDIO_BYTES,MAX_SECO
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {Textarea} from '@/components/ui/textarea';
+import {Tabs,TabsContent,TabsList,TabsTrigger} from '@/components/ui/tabs';
 import {LyricSyncPanel} from '@/components/LyricSyncPanel';
+import {EffectsPanel} from '@/components/EffectsPanel';
+import {MAX_SECTIONS,PRESETS,type Effect,type SectionKind,type SongSection} from './effects.mjs';
 import {canRedo,canUndo,clampView,contentWidth,createEditor,createView,cuesToLrc,editorReducer,fitPxPerSec,MAX_PROJECT_FILE_BYTES,parseProjectFile,serializeProject,timeToX,xToTime,zoomView,type View} from './editor.mjs';
 
 const sample='[00:00.00]Một nhịp thở\n[00:05.00]Rồi chữ bắt đầu chuyển động\n[00:12.00]Mỗi từ theo một nhịp\n[00:22.00]Đến lượt bạn kể chuyện';
@@ -28,7 +31,11 @@ export default function Studio() {
   const [audio,setAudio]=useState<LocalMedia|null>(null);
   const [video,setVideo]=useState<LocalMedia|null>(null);
   const [wide,setWide]=useState(false);
+  const [effect,setEffect]=useState<Effect>(PRESETS.classic);
+  const [sections,setSections]=useState<SongSection[]>([]);
+  const [showSections,setShowSections]=useState(false);
   const [draft,setDraft]=useState(sample);
+  const [inspectorTab,setInspectorTab]=useState('sync');
   const [editor,edit]=useReducer(editorReducer,demoCues,createEditor);
   const cues=editor.cues;
   const [selection,select]=useState<[number,number]|null>([0,0]);
@@ -59,12 +66,14 @@ export default function Studio() {
   }
   const time=frame/FPS;
   const visibleCues=useMemo(()=>clipCues(cues,duration),[cues,duration]);
-  const project=useMemo(()=>({width:wide?1280:720,height:wide?720:1280,durationInFrames:length,cues:visibleCues,videoDurationInFrames:videoLength}),[wide,length,visibleCues,videoLength]);
+  const project=useMemo(()=>({width:wide?1280:720,height:wide?720:1280,durationInFrames:length,cues:visibleCues,videoDurationInFrames:videoLength,effect,sections:sections.filter(s=>s.start<duration),showSections}),[wide,length,visibleCues,videoLength,effect,sections,duration,showSections]);
   const inputProps=useMemo(()=>({project,audioSrc:audio?.src ?? null,videoSrc:video?.src ?? null}),[project,audio,video]);
   const [liveLine,liveWord]=activeAt(visibleCues,time);
   const line=following?Math.max(0,liveLine):selection?.[0] ?? Math.max(0,cues.length-1);
   const cue=cues[line];
-  const canTap=following?Boolean(cue?.words.some(w=>!w.confirmed)):Boolean(selection && cue);
+  const targetWord=following?cue?.words.find(w=>!w.confirmed):selection?cue?.words[selection[1]]:undefined;
+  const canTap=Boolean(targetWord);
+  const canReplay=Boolean(cue && cue.start<duration);
 
   // One view object owns the timeline scale, so the Video and Lời tracks scroll
   // as a single timeline: whichever one scrolls publishes scrollX, and the
@@ -175,7 +184,7 @@ export default function Studio() {
     p.toggle(e);
     // Keep a pointer click from leaving Space bound to the transport button.
     // Keyboard activation retains focus on Play, and no viewport scroll is needed.
-    if (startWithPointer && cue) tapPanel.current?.focus({preventScroll:true});
+    if (startWithPointer && cue && inspectorTab==='sync') tapPanel.current?.focus({preventScroll:true});
   }
   function lockWord(word:number) {
     setFollowing(false);
@@ -191,6 +200,20 @@ export default function Studio() {
     setFollowing(false);
     select([i,0]);
     seek((cues[i].start-0.3)*FPS);
+  }
+  function pickTimelineCue(i:number) {
+    const c=cues[i];
+    if (!c) return;
+    const nextWord=c.words.findIndex(w=>!w.confirmed);
+    setFollowing(false);
+    select([i,Math.max(0,nextWord)]);
+    seek(Math.ceil(c.start*FPS));
+  }
+  function replayLine() {
+    if (!cue || !canReplay) return;
+    seek((cue.start-0.3)*FPS);
+    player.current?.play();
+    tapPanel.current?.focus({preventScroll:true});
   }
   function editLineStart(value:number) {
     if (!cue) return false;
@@ -221,10 +244,34 @@ export default function Studio() {
   }
   function undo(){if(canUndo(editor))edit({type:'undo'});}
   function redo(){if(canRedo(editor))edit({type:'redo'});}
+  function editEffect(value:Effect,scope:'project'|'line') {
+    if(scope==='project')setEffect(value);
+    else if(cue)edit({type:'commit',cues:cues.map((c,i)=>i===line?{...c,effect:value}:c)});
+  }
+  function resetLineEffect() {
+    if(!cue?.effect)return;
+    edit({type:'commit',cues:cues.map((c,i)=>i===line?{...c,effect:undefined}:c)});
+  }
+  const emphasisIndex=!following && selection?.[0]===line ? selection[1] : -1;
+  const emphasisWord=cue?.words[emphasisIndex];
+  function toggleEmphasis() {
+    if(!emphasisWord)return;
+    edit({type:'commit',cues:cues.map((c,i)=>i!==line?c:{...c,words:c.words.map((w,j)=>j!==emphasisIndex?w:{...w,emphasis:!w.emphasis})})});
+  }
+  function addSection(kind:SectionKind) {
+    const start=(player.current?.getCurrentFrame() ?? frame)/FPS;
+    setSections(previous=>{
+      if(previous.length>=MAX_SECTIONS && !previous.some(s=>s.start===start))return previous;
+      return [...previous.filter(s=>s.start!==start),{start,kind}].sort((a,b)=>a.start-b.start);
+    });
+  }
   function saveProject() {
     setError('');setNotice('');
     try {
-      const json=serializeProject({project,renderRange,media:{audio:audio?.file.name ?? null,video:video?.file.name ?? null}});
+      const lastCue=cues[cues.length-1];
+      const lastWord=lastCue?.words[lastCue.words.length-1];
+      const storedLength=Math.min(MAX_SECONDS*FPS,Math.max(length,Math.ceil((lastWord?.start ?? 0)*FPS)+1));
+      const json=serializeProject({project:{...project,durationInFrames:storedLength,cues,sections},renderRange,media:{audio:audio?.file.name ?? null,video:video?.file.name ?? null}});
       const url=URL.createObjectURL(new Blob([json],{type:'application/json'}));
       const a=document.createElement('a');a.href=url;a.download='remain-studio-project.json';a.click();
       window.setTimeout(()=>URL.revokeObjectURL(url),60000);
@@ -238,6 +285,9 @@ export default function Studio() {
       edit({type:'reset',cues:loaded.cues});
       setDraft(cuesToLrc(loaded.cues));
       setWide(loaded.width===1280);
+      setEffect(loaded.effect ?? PRESETS.classic);
+      setSections(loaded.sections ?? []);
+      setShowSections(loaded.showSections===true);
       if(loaded.renderRange){setRenderMode('range');setRangeStart(String(loaded.renderRange.startFrame/FPS));setRangeEnd(String(loaded.renderRange.endFrame/FPS));}
       else {setRenderMode('all');setRangeStart('0');setRangeEnd(null);}
       resetPlayhead();setFollowing(true);
@@ -299,10 +349,13 @@ export default function Studio() {
   }
 
   const tapFromKeyboard = useEffectEvent((e: KeyboardEvent) => {
+    if (inspectorTab!=='sync') return;
     const space=e.code==='Space';
     if (e.defaultPrevented || e.isComposing || e.repeat || e.altKey || e.ctrlKey || e.metaKey || (!space && e.key.toLowerCase()!=='t')) return;
     if (e.target instanceof HTMLElement) {
-      if (e.target.isContentEditable || e.target.closest('input:not([type=range]), textarea, select:not(#cue-picker)')) return;
+      const target=e.target;
+      if (target.isContentEditable || target.closest('input, textarea, select, [role=tablist]')) return;
+      if (target!==document.body && !target.closest('.sync-tab, .transport, .lyric-track')) return;
       // Keep Space activation for regular buttons, e.g. Export. During
       // playback Space taps even if the transport Play button retains focus.
       if (space && e.target.closest('select, a, button') && !e.target.closest('.words button') && !(player.current?.isPlaying() && e.target.closest('.play-toggle'))) return;
@@ -355,8 +408,8 @@ export default function Studio() {
       <div className="toolbar"><label>Khung hình<select value={wide?'wide':'tall'} onChange={e=>setWide(e.target.value==='wide')}><option value="tall">9:16 · Dọc</option><option value="wide">16:9 · Ngang</option></select></label>
       <Button type="button" className="px-3 font-semibold min-[781px]:px-4" disabled={busy || Boolean(rangeError) || (!visibleCues.length && !audio && !video)} onClick={exportClip}>{busy?(renderJob?`Đang render… ${Math.round(renderJob.progress*100)}%`:'Đang render…'):'Xuất MP4'}</Button>{busy && <Button type="button" variant="outline" className="px-3 min-h-[44px] min-[781px]:px-4" onClick={cancelRender}>Huỷ render</Button>}</div>
     </header>
-    <main className="workspace mt-3 grid grid-cols-1 gap-3 min-[781px]:grid-cols-[minmax(0,1fr)_minmax(296px,354px)]">
-      <section className="viewer" aria-label="Preview">
+    <main className="workspace">
+      <section className="viewer min-[781px]:self-start" aria-label="Preview">
         <div className="section-bar"><h2>Preview</h2><span className="badge">Aurora</span></div>
         <div className={'stage '+(wide?'wide':'tall')}>
           <Player ref={player} component={Scene} inputProps={inputProps} fps={FPS} durationInFrames={length} compositionWidth={project.width} compositionHeight={project.height} style={{width:'100%',aspectRatio:`${project.width} / ${project.height}`}} controls={false} spaceKeyToPlayOrPause={false} acknowledgeRemotionLicense />
@@ -364,27 +417,49 @@ export default function Studio() {
         <div className="transport"><Button type="button" variant="outline" size="icon" onClick={()=>seek(0)} title="Về đầu clip" aria-label="Về đầu clip">⏮</Button><Button type="button" variant="outline" className="play-toggle" onClick={togglePlayback}>{playing?'Tạm dừng':'Phát'}</Button><output>{seconds(time)} <span>/ {seconds(duration)}</span></output></div>
       </section>
       <aside className="inspector" aria-label="Nội dung project">
+        <Tabs value={inspectorTab} onValueChange={setInspectorTab} activationMode="manual" className="inspector-tabs">
+          <TabsList aria-label="Công cụ chỉnh sửa">
+            <TabsTrigger value="sync">Canh từ</TabsTrigger>
+            <TabsTrigger value="media">Media</TabsTrigger>
+            <TabsTrigger value="lyrics">Lời</TabsTrigger>
+            <TabsTrigger value="effects">Hiệu ứng</TabsTrigger>
+            <TabsTrigger value="project">Project</TabsTrigger>
+          </TabsList>
+          <TabsContent value="sync" className="sync-tab" forceMount>
         <LyricSyncPanel panelRef={tapPanel} cues={cues} line={line} selectedWord={following?null:selection?.[1] ?? null}
           liveLine={liveLine} liveWord={liveWord} time={time} playing={playing} following={following}
-          complete={!following && selection===null} canTap={canTap} onFollow={()=>setFollowing(true)}
+          complete={!following && selection===null} canTap={canTap} targetText={targetWord?.text} canReplay={canReplay} onReplay={replayLine} onFollow={()=>setFollowing(true)}
           onMarkMode={enterMarkMode} onLine={pickLine} onWord={lockWord} onLineStart={editLineStart} onTap={tap}/>
-        <section className="panel"><div className="section-bar"><h2>01 · Media</h2><span className="subtle">Nhạc 25 MiB · Video 100 MiB</span></div>
+          </TabsContent>
+          <TabsContent value="media" forceMount>
+        <section className="panel"><div className="section-bar"><h2>Media</h2><span className="subtle">Nhạc 25 MiB · Video 100 MiB</span></div>
           <label htmlFor="audio-file">Chọn nhạc từ máy</label><Input id="audio-file" type="file" accept="audio/*,.mp3,.m4a,.wav,.flac,.ogg" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void chooseMedia('audio',file);}}/>
           {audio && <div className="flex min-w-0 items-center justify-between gap-2.5"><span className="filename">{audio.file.name}</span><Button type="button" variant="outline" size="sm" onClick={()=>removeMedia('audio')}>Gỡ nhạc</Button></div>}
           <label htmlFor="video-file">Chọn video nền</label><Input id="video-file" type="file" accept="video/*,.mp4,.mov,.webm,.mkv" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void chooseMedia('video',file);}}/>
           {video && <div className="flex min-w-0 items-center justify-between gap-2.5"><span className="filename">{video.file.name}</span><Button type="button" variant="outline" size="sm" onClick={()=>removeMedia('video')}>Gỡ video</Button></div>}
           {video && <p className="hint">{audio?'Nhạc riêng thay âm thanh gốc của video.':'Đang dùng âm thanh gốc của video.'}</p>}
         </section>
-        <section className="panel"><div className="section-bar"><h2>02 · Lời</h2><label className="filebutton">Nhập .LRC<input type="file" accept=".lrc,text/plain" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void chooseLrc(file);}}/></label></div>
+          </TabsContent>
+          <TabsContent value="lyrics" forceMount>
+        <section className="panel"><div className="section-bar"><h2>Lời</h2><label className="filebutton">Nhập .LRC<input type="file" accept=".lrc,text/plain" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void chooseLrc(file);}}/></label></div>
           <form onSubmit={applyLyrics}><label htmlFor="lyrics">Dán lời, mỗi câu một dòng, hoặc dán LRC</label><Textarea id="lyrics" className="field-sizing-fixed" rows={5} maxLength={16000} value={draft} onChange={e=>setDraft(e.target.value)}/><Button type="submit" variant="outline">Áp dụng lời</Button></form>
         </section>
-        <section className="panel"><div className="section-bar"><h2>04 · Project</h2><span className="subtle">JSON · 1 MiB</span></div>
+          </TabsContent>
+          <TabsContent value="effects" forceMount>
+        <EffectsPanel effect={effect} lineLabel={cue?`Dòng ${line+1}: ${cue.text}`:undefined} lineEffect={cue?.effect}
+          onChange={editEffect} onResetLine={resetLineEffect} emphasisWord={emphasisWord?.text} emphasized={emphasisWord?.emphasis===true} onEmphasis={toggleEmphasis}
+          sections={sections} showSections={showSections} onShowSections={setShowSections} time={time} onAddSection={addSection}
+          onRemoveSection={start=>setSections(previous=>previous.filter(s=>s.start!==start))} onSeekSection={start=>seek(start*FPS)}/>
+          </TabsContent>
+          <TabsContent value="project" forceMount>
+        <section className="panel"><div className="section-bar"><h2>Project</h2><span className="subtle">JSON · 1 MiB</span></div>
           <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" onClick={saveProject}>Lưu project</Button><label className="filebutton">Nạp project<input id="project-file" type="file" accept=".json,application/json" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void loadProject(file);}}/></label></div>
           <p className="hint">File lưu lời, các mốc từ, khổ khung và phạm vi xuất. Nhạc cùng video không nằm trong file: hãy chọn lại đúng hai tệp đó khi mở project.</p>
         </section>
+          </TabsContent>
+        </Tabs>
       </aside>
-    </main>
-    <section className="timeline" ref={timelineSection} aria-label="Timeline">
+      <section className="timeline" ref={timelineSection} aria-label="Timeline">
       <div className="section-bar"><h2>Timeline</h2><div className="flex flex-wrap items-center gap-1.5">
         <Button type="button" variant="outline" size="sm" disabled={!canUndo(editor)} onClick={undo} title="Hoàn tác (Ctrl+Z)">Hoàn tác</Button>
         <Button type="button" variant="outline" size="sm" disabled={!canRedo(editor)} onClick={redo} title="Làm lại (Ctrl+Shift+Z)">Làm lại</Button>
@@ -395,8 +470,22 @@ export default function Studio() {
       <div className="lane"><span>Playhead</span><input id="timeline" aria-label="Vị trí timeline" type="range" min={0} max={length-1} step={1} value={frame} onChange={e=>seek(Number(e.target.value))}/></div>
       <div className="lane"><span>Video</span><div ref={videoTrack} className="track video-track scrollable" onScroll={e=>scrollTimeline(e.currentTarget.scrollLeft)}><div className="track-strip" style={{width:`${contentWidth(duration,view)}px`}}>{video && <span style={{width:`${timeToX((videoLength ?? 0)/FPS,view)}px`}}>{video.file.name}</span>}</div></div></div>
       <div className="lane"><span>Nhạc</span><div className={'audio-lane '+(audio?'loaded':'')}>{audio?audio.file.name:'Chưa có nhạc'}</div></div>
-      <div className="lane"><span>Lời</span><div ref={lyricTrack} className="track scrollable" onScroll={e=>scrollTimeline(e.currentTarget.scrollLeft)}><div className="track-strip" style={{width:`${contentWidth(duration,view)}px`}}>{visibleCues.map((c,i)=><button key={i} className={i===liveLine?'live':''} title={`${c.text} · ${seconds(c.start)}`} aria-label={`Tua đến dòng ${i+1}: ${c.text}`} onClick={()=>{select([i,0]);seek(Math.ceil(c.start*FPS));}} style={{left:`${timeToX(c.start,view)}px`,width:`${Math.max(28,timeToX((visibleCues[i+1]?.start??duration)-c.start,view))}px`}}>{c.text}</button>)}</div></div></div>
-    </section>
+        <div className="lane"><span>Lời</span><div ref={lyricTrack} className="track lyric-track scrollable" onScroll={e=>scrollTimeline(e.currentTarget.scrollLeft)}>
+          <div className="track-strip" style={{width:`${contentWidth(duration,view)}px`}}>
+            {visibleCues.map((c,i)=>{
+              const complete=c.words.every(w=>w.confirmed);
+              const selected=!following && line===i && selection!==null;
+              const status=complete?' · Đã canh xong':'';
+              return <button type="button" key={i} className={i===liveLine?'live':''} data-complete={complete || undefined} data-selected={selected || undefined}
+                aria-current={i===liveLine?'time':undefined} title={`${c.text} · ${seconds(c.start)}${status}`}
+                aria-label={`Tua đến dòng ${i+1}: ${c.text}${status}${selected?' · Đang chọn':''}`} onClick={()=>pickTimelineCue(i)}
+                style={{left:`${timeToX(c.start,view)}px`,width:`${Math.max(28,timeToX((visibleCues[i+1]?.start??duration)-c.start,view))}px`}}>
+                {complete && <span className="cue-check" aria-hidden="true">✓ </span>}{c.text}
+              </button>;
+            })}
+          </div></div></div>
+      </section>
+    </main>
     <section className="export-options" aria-label="Thiết lập xuất video">
       <div className="section-bar"><h2>Thiết lập xuất</h2><output id="render-duration">{rangeError?'—':seconds((renderRange?renderRange.endFrame-renderRange.startFrame:length)/FPS)}</output></div>
       {busy && <div className="render-progress"><progress value={Math.round((renderJob?.progress ?? 0)*100)} max={100}/><span role="status" aria-live="polite">{renderJob?renderStatus(renderJob):'Đang chuẩn bị render…'}</span></div>}
