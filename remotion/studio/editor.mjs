@@ -1,9 +1,9 @@
-// Editor foundation for Remain Studio: cue history (undo/redo), timeline zoom
+// Editor foundation for Remain Studio: cue/video history (undo/redo), timeline zoom
 // state, and the .json project file format.
 //
 // Everything here is pure — no React, no DOM — so it runs under `node --test`
 // and so the React reducer stays side-effect free: event handlers compute the
-// next cues (and catch validation errors), then commit the result.
+// next cues or video track (and catch validation errors), then commit the result.
 import {validateProject} from './project.mjs';
 
 export const HISTORY_LIMIT = 100;
@@ -18,8 +18,12 @@ const clamp = (min, value, max) => Math.min(Math.max(value, min), max);
 
 // ---------------------------------------------------------------- history ---
 
-export function createEditor(cues) {
-  return {cues, past: [], future: []};
+function snapshot({cues, videoTrack}) {
+  return videoTrack === undefined ? {cues} : {cues, videoTrack};
+}
+
+export function createEditor(cues, videoTrack) {
+  return {...snapshot({cues, videoTrack}), past: [], future: []};
 }
 
 export const canUndo = state => state.past.length > 0;
@@ -28,23 +32,23 @@ export const canRedo = state => state.future.length > 0;
 export function editorReducer(state, action) {
   switch (action.type) {
     case 'commit': {
-      // A mutation that produced the same cues must not pollute the history.
-      if (action.cues === state.cues) return state;
-      return {cues: action.cues, past: [...state.past, state.cues].slice(-HISTORY_LIMIT), future: []};
+      // Omitting the track in a cue-only edit preserves the current video mode.
+      const {cues, videoTrack = state.videoTrack} = action;
+      if (cues === state.cues && videoTrack === state.videoTrack) return state;
+      return {...snapshot({cues, videoTrack}), past: [...state.past, snapshot(state)].slice(-HISTORY_LIMIT), future: []};
     }
     case 'undo': {
       if (!state.past.length) return state;
-      return {cues: state.past.at(-1), past: state.past.slice(0, -1), future: [state.cues, ...state.future].slice(0, HISTORY_LIMIT)};
+      return {...state.past.at(-1), past: state.past.slice(0, -1), future: [snapshot(state), ...state.future].slice(0, HISTORY_LIMIT)};
     }
     case 'redo': {
       if (!state.future.length) return state;
-      return {cues: state.future[0], past: [...state.past, state.cues].slice(-HISTORY_LIMIT), future: state.future.slice(1)};
+      return {...state.future[0], past: [...state.past, snapshot(state)].slice(-HISTORY_LIMIT), future: state.future.slice(1)};
     }
     case 'reset': {
-      // Loading a project replaces the editing session: the previous cues are
-      // not something the user should be able to undo back into.
-      if (action.cues === state.cues) return state;
-      return {cues: action.cues, past: [], future: []};
+      // Loading replaces both tracks and starts a fresh history.
+      if (action.cues === state.cues && action.videoTrack === state.videoTrack && !canUndo(state) && !canRedo(state)) return state;
+      return createEditor(action.cues, action.videoTrack);
     }
     default:
       throw Error(`Action editor không được biết: ${action.type}`);
@@ -122,6 +126,7 @@ export function serializeProject({project, renderRange, media}) {
   if (clean.sections !== undefined) file.sections=clean.sections;
   if (clean.showSections) file.showSections=true;
   if (clean.videoDurationInFrames !== undefined) file.videoDurationInFrames = clean.videoDurationInFrames;
+  if (clean.videoTrack !== undefined) file.videoTrack=clean.videoTrack;
   if (clean.renderRange !== undefined) file.renderRange = clean.renderRange;
   // Media bytes cannot live in JSON (the editor holds object URLs), so the
   // file records the names and the user re-picks the same files on load.

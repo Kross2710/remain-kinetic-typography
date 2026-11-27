@@ -30,6 +30,9 @@ export function mediaNames(media: Partial<Record<MediaKind, MediaSource>> | null
 export function buildSessionRecord({project, cues, length, renderRange, media, view, savedAt}: {project: Project; cues: Cue[]; length: number; renderRange?: RenderRange | null; media?: Partial<Record<MediaKind, MediaSource>> | null; view?: View | null; savedAt?: number | null}): SessionRecord;
 export function saveSession(db: IDBDatabase, {record, media}: {record: SessionRecord; media?: MediaInput}): Promise<SaveOutcome>;
 export function loadSession(db: IDBDatabase): Promise<SessionSnapshot | null>;
+export function saveClipMedia(db: IDBDatabase, mediaId: string, entry: StoredMedia): Promise<boolean>;
+export function loadClipMedia(db: IDBDatabase, mediaIds: Iterable<string>): Promise<Record<string, StoredMedia>>;
+export function pruneClipMedia(db: IDBDatabase, keepIds: Iterable<string>): Promise<void>;
 export function clearSession(db: IDBDatabase): Promise<void>;
 export function rememberJobId(id: string, storage?: Storage): void;
 export function readJobId(storage?: Storage): string | null;

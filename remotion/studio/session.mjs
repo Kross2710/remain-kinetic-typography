@@ -136,6 +136,42 @@ export async function loadSession(db) {
   return {record: {version: record.version ?? SESSION_VERSION, json: record.json, savedAt: record.savedAt ?? null, view: record.view ?? null, media: record.media ?? mediaNames(media)}, media};
 }
 
+const clipMediaPrefix = 'clip:';
+
+// Write only the changed source. Split segments share one physical blob.
+export async function saveClipMedia(db, mediaId, entry) {
+  const transaction = db.transaction(MEDIA_STORE, 'readwrite');
+  const complete = transactionComplete(transaction);
+  transaction.objectStore(MEDIA_STORE).put(entry, clipMediaPrefix + mediaId);
+  try {
+    await complete;
+    return true;
+  } catch (error) {
+    if (!isQuotaError(error)) throw error;
+    return false;
+  }
+}
+
+export async function loadClipMedia(db, mediaIds) {
+  const store = db.transaction(MEDIA_STORE, 'readonly').objectStore(MEDIA_STORE);
+  const entries = await Promise.all(Array.from(new Set(mediaIds), async id =>
+    [id, await requestResult(store.get(clipMediaPrefix + id))]));
+  return Object.fromEntries(entries.filter(([,entry]) => entry?.blob));
+}
+
+// Any IDs retained by undo/redo must be included by the caller.
+export async function pruneClipMedia(db, keepIds) {
+  const transaction = db.transaction(MEDIA_STORE, 'readwrite');
+  const complete = transactionComplete(transaction);
+  const store = transaction.objectStore(MEDIA_STORE);
+  const keep = new Set(keepIds);
+  const keys = await requestResult(store.getAllKeys());
+  for (const key of keys) {
+    if (typeof key === 'string' && key.startsWith(clipMediaPrefix) && !keep.has(key.slice(clipMediaPrefix.length))) store.delete(key);
+  }
+  await complete;
+}
+
 export async function clearSession(db) {
   for (const store of [SESSION_STORE, MEDIA_STORE]) {
     const transaction = db.transaction(store, 'readwrite');

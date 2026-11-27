@@ -105,6 +105,23 @@ test('clearSession wipes the project and the media', async () => {
   assert.equal(await session.loadSession(db), null);
 });
 
+test('clip sources are keyed by id, not by original filename', async () => {
+  const db = await freshDb();
+  await session.saveClipMedia(db, 'a', {name:'same.mp4', seconds:2, blob:blob('first')});
+  await session.saveClipMedia(db, 'b', {name:'same.mp4', seconds:3, blob:blob('second')});
+  const sources = await session.loadClipMedia(db, ['b', 'missing', 'a', 'b']);
+  assert.deepEqual(Object.keys(sources), ['b', 'a']);
+  assert.equal(await sources.b.blob.text(), 'second');
+  assert.equal(await sources.a.blob.text(), 'first');
+  await session.pruneClipMedia(db, ['a']);
+  assert.deepEqual(Object.keys(await session.loadClipMedia(db, ['a','b'])), ['a']);
+});
+
+test('session envelope keeps markers past the preview duration', () => {
+  const record = session.buildSessionRecord({project:{...projectObject([]), sections:[{kind:'chorus',start:40}]}, cues:[], length:60});
+  assert.deepEqual(editor.parseProjectFile(record.json).sections, [{kind:'chorus',start:40}]);
+});
+
 // A browser that runs out of storage must still keep the project, so the quota
 // path is exercised with a store that refuses one specific blob.
 function quotaDb({quotaKeys = []} = {}) {

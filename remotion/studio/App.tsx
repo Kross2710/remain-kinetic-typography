@@ -1,7 +1,10 @@
 import {useEffect,useEffectEvent,useLayoutEffect,useMemo,useReducer,useRef,useState,type FormEvent,type MouseEvent as ReactMouseEvent} from 'react';
 import {Player,type PlayerRef} from '@remotion/player';
-import {Scene} from './Scene';
-import {activeAt,clipCues,DEMO_SECONDS,FPS,importLyrics,MAX_AUDIO_BYTES,MAX_SECONDS,MAX_VIDEO_BYTES,rangeFromSeconds,setCueStart,setWordStart,timelineLength,validateProject,type RenderRange} from './project.mjs';
+import {defaultLyricCorners,Scene} from './Scene';
+import {PerspectiveEditor} from './components/PerspectiveEditor';
+import {attachCue,detachCue,removeCueAttachments,splitCueAttachments} from './lyric-attachment.mjs';
+import type {PerspectiveCorners} from './perspective.mjs';
+import {activeAt,clipCues,DEMO_SECONDS,FPS,importLyrics,MAX_AUDIO_BYTES,MAX_SECONDS,MAX_VIDEO_BYTES,rangeFromSeconds,setCueStart,setWordStart,timelineLength,validateProject,type Cue,type RenderRange} from './project.mjs';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {Textarea} from '@/components/ui/textarea';
@@ -12,14 +15,34 @@ import {TimelineTracks} from '@/components/TimelineTracks';
 import {splitCue} from './timeline.mjs';
 import {MAX_SECTIONS,PRESETS,PRESET_LABELS,type Effect,type MotionId,type SectionKind,type SongSection} from './effects.mjs';
 import {canRedo,canUndo,clampView,contentWidth,createEditor,createView,cuesToLrc,editorReducer,MAX_PROJECT_FILE_BYTES,parseProjectFile,serializeProject,xToTime,zoomView,type View} from './editor.mjs';
-import {buildSessionRecord,clearSession,forgetJobId,loadSession,openStudioDb,QUOTA_NOTICE,readJobId,rememberJobId,saveSession,storedLengthFrames,type SessionSnapshot} from './session.mjs';
+import {buildSessionRecord,clearSession,forgetJobId,loadClipMedia,loadSession,openStudioDb,QUOTA_NOTICE,readJobId,rememberJobId,saveClipMedia,saveSession,storedLengthFrames,type MediaSnapshot,type SessionSnapshot} from './session.mjs';
+import {clipSpans,moveClip,muteClip,removeClip,splitClip,trimClip,validateVideoTrack,videoTrackFrames,type VideoClip} from './video-track.mjs';
 
 const sample='[00:00.00]Một nhịp thở\n[00:05.00]Rồi chữ bắt đầu chuyển động\n[00:12.00]Mỗi từ theo một nhịp\n[00:22.00]Đến lượt bạn kể chuyện';
 const demoCues=importLyrics(sample,DEMO_SECONDS);
 const seconds=(n:number)=>n.toFixed(2)+'s';
 const errText=(e:unknown)=>e instanceof Error?e.message:String(e);
+const createClipId=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('');
 type MediaKind='audio'|'video';
 type LocalMedia={file:File;src:string;seconds:number};
+async function probeMedia(kind:MediaKind,file:File):Promise<LocalMedia> {
+  const isAudio=kind==='audio';
+  if(file.size>(isAudio?MAX_AUDIO_BYTES:MAX_VIDEO_BYTES)) throw Error(isAudio?'File nhạc tối đa 25 MiB.':'File video tối đa 100 MiB.');
+  const src=URL.createObjectURL(file), probe=document.createElement(kind);
+  const unreadable=isAudio?'Không đọc được nhạc. Hãy thử MP3 hoặc WAV.':'Không đọc được video. Hãy thử MP4 (H.264) hoặc WebM.';
+  try {
+    const seconds=await new Promise<number>((resolve,reject)=>{
+      const timer=window.setTimeout(()=>reject(Error(unreadable)),10000);
+      probe.onloadedmetadata=()=>{clearTimeout(timer);resolve(probe.duration);};
+      probe.onerror=()=>{clearTimeout(timer);reject(Error(unreadable));};
+      probe.preload='metadata';probe.src=src;
+    });
+    if(!Number.isFinite(seconds) || seconds<1/FPS || (probe instanceof HTMLVideoElement && !probe.videoWidth)) throw Error(unreadable);
+    if(seconds>MAX_SECONDS) throw Error('Studio hỗ trợ timeline tối đa 2 giờ.');
+    return {file,src,seconds};
+  } catch(error){URL.revokeObjectURL(src);throw error;}
+  finally {probe.onloadedmetadata=null;probe.onerror=null;probe.removeAttribute('src');probe.load();}
+}
 type RenderJob={phase:string;progress:number;renderedFrames:number|null;totalFrames:number|null;etaSeconds:number|null};
 type RenderJobResponse={id:string;status:string;phase:string;progress:number;renderedFrames:number|null;totalFrames:number|null;etaMs:number|null;error?:string};
 const PHASE_LABEL:Record<string,string>={upload:'Đang tải project lên máy chủ',prepare:'Đang chuẩn bị nhạc và video',bundle:'Đang đóng gói bundle',render:'Đang render khung hình',encoding:'Đang render và mã hoá khung hình',muxing:'Đang ghép âm thanh',done:'Hoàn tất',cancelled:'Đã huỷ render',failed:'Render thất bại'};
@@ -35,7 +58,14 @@ export default function Studio() {
   const sessionRestoring=useRef(false);
   const [audio,setAudio]=useState<LocalMedia|null>(null);
   const [video,setVideo]=useState<LocalMedia|null>(null);
+  const [sources,setSources]=useState<Record<string,LocalMedia>>({});
+  const [expectedMedia,setExpectedMedia]=useState<MediaSnapshot>({audio:null,video:null});
+  const [legacyTiming,setLegacyTiming]=useState<{length:number;videoLength?:number}|null>(null);
+  const projectGeneration=useRef(0);
+  const [readingClips,setReadingClips]=useState(false);
   const [wide,setWide]=useState(false);
+  const [perspectiveLine,setPerspectiveLine]=useState<number|null>(null);
+  const [perspectiveDraft,setPerspectiveDraft]=useState<PerspectiveCorners|null>(null);
   const [effect,setEffect]=useState<Effect>(PRESETS.whisper);
   const [sections,setSections]=useState<SongSection[]>([]);
   const [showSections,setShowSections]=useState(false);
@@ -73,8 +103,16 @@ export default function Studio() {
   const [timelineWidth,setTimelineWidth]=useState(0);
   const [snapEnabled,setSnapEnabled]=useState(false);
   const timelineFitted=useRef(true);
-  const length=timelineLength(audio?.seconds ?? null,video?.seconds ?? null);
-  const videoLength=video ? timelineLength(null,video.seconds) : undefined;
+  const videoTrack=editor.videoTrack;
+  const videoMode=videoTrack!==undefined;
+  const missingSources=useMemo(()=>new Set((videoTrack ?? []).filter(clip=>!Object.prototype.hasOwnProperty.call(sources,clip.mediaId)).map(clip=>clip.mediaId)),[videoTrack,sources]);
+  const missingAudio=Boolean(expectedMedia.audio&&!audio);
+  const missingLegacyVideo=Boolean(!videoMode&&expectedMedia.video&&!video);
+  const missingMedia=missingAudio||missingLegacyVideo||missingSources.size>0;
+  const length=videoMode
+    ? Math.max(1,videoTrackFrames(videoTrack),videoTrack.length?0:audio?timelineLength(audio.seconds,null):0)
+    : missingMedia&&legacyTiming?legacyTiming.length:timelineLength(audio?.seconds ?? null,video?.seconds ?? null);
+  const videoLength=video ? timelineLength(null,video.seconds) : missingLegacyVideo ? legacyTiming?.videoLength : undefined;
   const duration=length/FPS;
   const endInput=rangeEnd ?? duration.toFixed(3).replace(/\.?0+$/,'');
   let renderRange:RenderRange|undefined;
@@ -84,10 +122,22 @@ export default function Studio() {
     catch (e) {rangeError=errText(e);}
   }
   const time=frame/FPS;
+  const editAspect:'wide'|'tall'=wide?'wide':'tall';
+  const perspectiveCue=perspectiveLine===null?undefined:cues[perspectiveLine];
+  const aspectNeedsReview=cues.some(line=>line.perspective&&line.perspective.aspect!==editAspect);
+  const spans=useMemo(()=>clipSpans(videoTrack ?? []),[videoTrack]);
   const visibleCues=useMemo(()=>clipCues(cues,duration),[cues,duration]);
-  const project=useMemo(()=>({width:wide?1280:720,height:wide?720:1280,durationInFrames:length,cues:visibleCues,videoDurationInFrames:videoLength,effect,sections:sections.filter(s=>s.start<duration),showSections}),[wide,length,visibleCues,videoLength,effect,sections,duration,showSections]);
-  const inputProps=useMemo(()=>({project,audioSrc:audio?.src ?? null,videoSrc:video?.src ?? null}),[project,audio,video]);
-  const [liveLine,liveWord]=activeAt(visibleCues,time);
+  const project=useMemo(()=>({width:wide?1280:720,height:wide?720:1280,durationInFrames:length,cues:visibleCues,videoDurationInFrames:videoMode?undefined:videoLength,videoTrack,effect,sections:sections.filter(s=>s.start<duration),showSections}),[wide,length,visibleCues,videoMode,videoLength,videoTrack,effect,sections,duration,showSections]);
+  const previewProject=useMemo(()=>{
+    const source=videoMode?cues:visibleCues;
+    const edited=perspectiveDraft&&perspectiveLine!==null?source.map((line,index)=>index===perspectiveLine?{...line,perspective:{corners:perspectiveDraft,aspect:editAspect}}:line):source;
+    return {...project,cues:edited};
+  },[cues,visibleCues,videoMode,perspectiveDraft,perspectiveLine,editAspect,project]);
+  const videoSources=useMemo(()=>Object.fromEntries(Object.entries(sources).map(([id,media])=>[id,media.src])),[sources]);
+  const inputProps=useMemo(()=>({project:previewProject,audioSrc:audio?.src ?? null,videoSrc:videoMode?null:video?.src ?? null,videoSources}),[previewProject,audio,video,videoMode,videoSources]);
+  const songCues=useMemo(()=>effect.preset==='web-match'?cues:cues.filter(c=>!c.attachment),[cues,effect.preset]);
+  const [songLine,liveWord]=activeAt(songCues,time);
+  const liveLine=songLine<0?-1:cues.indexOf(songCues[songLine]);
   const line=following?Math.max(0,liveLine):selection?.[0] ?? Math.max(0,cues.length-1);
   const cue=cues[line];
   const targetWord=following?cue?.words.find(w=>!w.confirmed):selection?cue?.words[selection[1]]:undefined;
@@ -165,6 +215,10 @@ export default function Studio() {
     };
   },[]);
 
+  useEffect(()=>{
+    const p=player.current;
+    if(p&&p.getCurrentFrame()>=length)p.seekTo(length-1);
+  },[length]);
   function seek(next:number) {
     const clamped=Math.max(0,Math.min(length-1,Math.round(next)));
     player.current?.seekTo(clamped);
@@ -200,32 +254,69 @@ export default function Studio() {
   }
   async function chooseMedia(kind:MediaKind,file:File) {
     const seq=++uploadSeq.current[kind];
-    const isAudio=kind==='audio';
     setError('');
-    if(file.size>(isAudio?MAX_AUDIO_BYTES:MAX_VIDEO_BYTES)) {
-      setError(isAudio?'File nhạc tối đa 25 MiB.':'File video tối đa 100 MiB.');
-      return;
-    }
-    const src=URL.createObjectURL(file);
-    const probe=document.createElement(kind);
-    const unreadable=isAudio?'Không đọc được nhạc. Hãy thử MP3 hoặc WAV.':'Không đọc được video. Hãy thử MP4 (H.264) hoặc WebM.';
     try {
-      const mediaSeconds=await new Promise<number>((resolve,reject)=>{
-        const timer=window.setTimeout(()=>reject(Error(unreadable)),10000);
-        probe.onloadedmetadata=()=>{clearTimeout(timer);resolve(probe.duration);};
-        probe.onerror=()=>{clearTimeout(timer);reject(Error(unreadable));};
-        probe.preload='metadata';probe.src=src;
-      });
-      if(seq!==uploadSeq.current[kind]){URL.revokeObjectURL(src);return;}
-      if(!Number.isFinite(mediaSeconds) || mediaSeconds<1/FPS || (probe instanceof HTMLVideoElement && !probe.videoWidth)) throw Error(unreadable);
-      if(mediaSeconds>MAX_SECONDS) throw Error('Studio hỗ trợ timeline tối đa 2 giờ.');
-      resetPlayhead();setLocalMedia(kind,{file,src,seconds:mediaSeconds});
-      setNotice(isAudio?'Đã nạp nhạc.':'Đã nạp video.');
-    } catch(e){URL.revokeObjectURL(src);if(seq===uploadSeq.current[kind])setError(errText(e));}
-    finally {probe.onloadedmetadata=null;probe.onerror=null;probe.removeAttribute('src');probe.load();}
+      const media=await probeMedia(kind,file);
+      if(seq!==uploadSeq.current[kind]){URL.revokeObjectURL(media.src);return;}
+      const firstMusic=kind==='audio'&&!mediaState.current.audio&&!expectedMedia.audio;
+      if(firstMusic) commitTrack(clips=>clips.some(clip=>!clip.muted)?clips.map(clip=>({...clip,muted:true})):clips);
+      setExpectedMedia(current=>({...current,[kind]:file.name}));
+      resetPlayhead();setLocalMedia(kind,media);
+      setNotice(kind==='audio'?'Đã nạp nhạc.':'Đã nạp video.');
+    } catch(e){if(seq===uploadSeq.current[kind])setError(errText(e));}
+  }
+  const currentEdit=useRef({cues,videoTrack,sources,expectedMedia});
+  useLayoutEffect(()=>{currentEdit.current={cues,videoTrack,sources,expectedMedia};},[cues,videoTrack,sources,expectedMedia]);
+  function commitTrack(operation:(clips:VideoClip[])=>VideoClip[], moveLyrics?:(lines:Cue[])=>Cue[]) {
+    const state=currentEdit.current;
+    if(!state.videoTrack)return;
+    try {
+      const next=operation(state.videoTrack);
+      if(videoTrackFrames(next)>MAX_SECONDS*FPS)throw Error('Studio hỗ trợ timeline tối đa 2 giờ.');
+      if(next!==state.videoTrack){
+        if(moveLyrics)closePerspective();
+        edit({type:'commit',cues:moveLyrics?moveLyrics(state.cues):state.cues,videoTrack:next});
+      }
+      setError('');
+    } catch(e){setError(errText(e));}
+  }
+  async function chooseClips(files:File[], relinkId?:string) {
+    if(!files.length||readingClips)return;
+    const generation=projectGeneration.current;
+    const added:Record<string,LocalMedia>=Object.create(null);
+    setReadingClips(true);setError('');
+    try {
+      for(const file of files) {
+        const id=relinkId ?? createClipId();
+        added[id]=await probeMedia('video',file);
+      }
+      const state=currentEdit.current;
+      if(generation!==projectGeneration.current || !state.videoTrack)return;
+      const next=relinkId?state.videoTrack:validateVideoTrack([...state.videoTrack,...Object.entries(added).map(([id,media])=>({
+        id,mediaId:id,name:media.file.name,sourceFrames:timelineLength(null,media.seconds),inFrame:0,outFrame:timelineLength(null,media.seconds),muted:Boolean(state.expectedMedia.audio),
+      }))]);
+      if(videoTrackFrames(next)>MAX_SECONDS*FPS)throw Error('Studio hỗ trợ timeline tối đa 2 giờ.');
+      if(relinkId&&!next.some(clip=>clip.mediaId===relinkId))return;
+      if(relinkId&&next.some(clip=>clip.mediaId===relinkId&&clip.sourceFrames>timelineLength(null,added[relinkId].seconds)))throw Error('Video chọn lại ngắn hơn nguồn gốc; hãy chọn đúng file.');
+      const newSources={...state.sources,...added};
+      const total=[...new Set(next.map(clip=>clip.mediaId))].reduce((size,id)=>size+(newSources[id]?.file.size??0),0);
+      if(total>MAX_VIDEO_BYTES)throw Error('Tổng video của project tối đa 100 MiB.');
+      setSources(newSources);
+      if(!relinkId)edit({type:'commit',cues:state.cues,videoTrack:next});
+      const db=sessionDb.current;
+      if(db)for(const [id,media] of Object.entries(added)) {
+        if(!await saveClipMedia(db,id,{blob:media.file,name:media.file.name,seconds:media.seconds}))setSessionQuota(true);
+      }
+      if(generation===projectGeneration.current)setNotice(relinkId?'Đã chọn lại video nguồn.':`Đã thêm ${files.length} clip.`);
+    } catch(e){if(generation===projectGeneration.current)setError(errText(e));}
+    finally {
+      if(generation===projectGeneration.current)setReadingClips(false);
+      window.setTimeout(()=>{for(const [id,media] of Object.entries(added))if(currentEdit.current.sources[id]?.src!==media.src)URL.revokeObjectURL(media.src);},0);
+    }
   }
   function removeMedia(kind:MediaKind) {
     ++uploadSeq.current[kind];
+    setExpectedMedia(current=>({...current,[kind]:null}));
     resetPlayhead();
     setLocalMedia(kind,null);
     setError('');setNotice('');
@@ -248,19 +339,61 @@ export default function Studio() {
     const unmarked=cue.words.findIndex(w=>!w.confirmed);
     lockWord(unmarked<0?Math.max(0,liveWord):unmarked);
   }
+  function firstSceneFrame(line:Cue) {
+    for(const span of spans) {
+      const attachment=line.attachment;
+      const segment=attachment?.segments.find(s=>s.clipId===span.id);
+      if(!attachment||!segment)continue;
+      const shift=span.startFrame-span.inFrame+segment.offsetFrames;
+      const first=Math.max(span.startFrame,Math.ceil(line.start*FPS+shift-1e-8));
+      const last=Math.min(span.endFrame,Math.ceil(attachment.end*FPS+shift-1e-8));
+      if(first<last)return {first,last};
+    }
+    return null;
+  }
+  function openPerspective(i:number) {
+    const line=cues[i];
+    if(!line||effect.preset==='web-match')return;
+    player.current?.pause();
+    setFollowing(false);select([i,0]);
+    setPerspectiveDraft(null);setPerspectiveLine(i);
+    const attached=firstSceneFrame(line);
+    if(attached)seek(Math.min(attached.last-1,attached.first+6));
+    else if(!line.attachment)seek(Math.min(Math.ceil((cues[i+1]?.start ?? duration)*FPS)-1,Math.ceil(line.start*FPS)+6));
+  }
+  function closePerspective() {setPerspectiveLine(null);setPerspectiveDraft(null);}
+  function updatePerspective(i:number,corners?:PerspectiveCorners) {
+    const state=currentEdit.current;
+    if(!state.cues[i])return;
+    edit({type:'commit',cues:state.cues.map((line,index)=>index===i?{...line,perspective:corners?{corners,aspect:editAspect}:undefined}:line)});
+  }
+  function toggleAttachment(i:number) {
+    const line=cues[i];
+    if(!line||!videoTrack)return;
+    try {
+      const start=Math.ceil(line.start*FPS-1e-8);
+      const at=spans.find(span=>span.startFrame<=start&&start<span.endFrame);
+      if(!line.attachment&&!at)throw Error('Mốc đầu dòng phải nằm trong một clip video để gắn.');
+      edit({type:'commit',cues:line.attachment?detachCue(cues,i):attachCue(cues,i,videoTrack,at!.id,duration)});
+      setError('');
+    } catch(error){setError(errText(error));}
+  }
   function pickLine(i:number) {
     if (!cues[i]) return;
+    if(perspectiveLine!==null){openPerspective(i);return;}
     setFollowing(false);
     select([i,0]);
-    seek((cues[i].start-0.3)*FPS);
+    const attached=firstSceneFrame(cues[i]);
+    seek(attached?.first ?? (cues[i].start-0.3)*FPS);
   }
   function pickTimelineCue(i:number) {
     const c=cues[i];
     if (!c) return;
+    if(perspectiveLine!==null){openPerspective(i);return;}
     const nextWord=c.words.findIndex(w=>!w.confirmed);
     setFollowing(false);
     select([i,Math.max(0,nextWord)]);
-    seek(Math.ceil(c.start*FPS));
+    seek(firstSceneFrame(c)?.first ?? Math.ceil(c.start*FPS));
   }
   function replayLine() {
     if (!cue || !canReplay) return;
@@ -339,10 +472,12 @@ export default function Studio() {
       return [...previous.filter(s=>s.start!==start),{start,kind}].sort((a,b)=>a.start-b.start);
     });
   }
+  const persistedMedia={audio:audio?.file.name ?? expectedMedia.audio,video:videoMode?null:video?.file.name ?? expectedMedia.video};
+  const exportUnavailable=missingMedia||(videoMode?!videoTrack.length:(!visibleCues.length&&!audio&&!video));
   function saveProject() {
     setError('');setNotice('');
     try {
-      const json=serializeProject({project:{...project,durationInFrames:storedLengthFrames({length,cues}),cues,sections},renderRange,media:{audio:audio?.file.name ?? null,video:video?.file.name ?? null}});
+      const json=serializeProject({project:{...project,durationInFrames:storedLengthFrames({length,cues}),cues,sections},renderRange,media:persistedMedia});
       const url=URL.createObjectURL(new Blob([json],{type:'application/json'}));
       const a=document.createElement('a');a.href=url;a.download='remain-studio-project.json';a.click();
       window.setTimeout(()=>URL.revokeObjectURL(url),60000);
@@ -353,7 +488,15 @@ export default function Studio() {
     try {
       if(file.size>MAX_PROJECT_FILE_BYTES) throw Error('File project tối đa 1 MiB.');
       const loaded=parseProjectFile(await file.text());
-      edit({type:'reset',cues:loaded.cues});
+      ++projectGeneration.current;setReadingClips(false);closePerspective();
+      for(const kind of ['audio','video'] as const) {
+        ++uploadSeq.current[kind];
+        const media=mediaState.current[kind];
+        if(media&&media.file.name!==loaded.media[kind])setLocalMedia(kind,null);
+      }
+      setExpectedMedia(loaded.media);
+      setLegacyTiming({length:loaded.durationInFrames,videoLength:loaded.videoDurationInFrames});
+      edit({type:'reset',cues:loaded.cues,videoTrack:loaded.videoTrack});
       setDraft(cuesToLrc(loaded.cues));
       setWide(loaded.width===1280);
       setEffect(loaded.effect ?? PRESETS.classic);
@@ -402,14 +545,19 @@ export default function Studio() {
     uploadAbort.current?.abort();
   }
   async function exportClip() {
+    if(exportUnavailable || rangeError || busy)return;
     setError('');setNotice('');setBusy(true);
     setRenderJob({phase:'upload',progress:0,renderedFrames:null,totalFrames:null,etaSeconds:null});
     const upload=new AbortController();
     uploadAbort.current=upload;
     try {
-      const data=new FormData();data.set('project',JSON.stringify(validateProject({...project,renderRange})));
+      const data=new FormData();
+      const exportProject=videoMode?{...project,cues,durationInFrames:storedLengthFrames({length,cues})}:project;
+      data.set('project',JSON.stringify(validateProject({...exportProject,renderRange})));
       if(audio)data.set('audio',audio.file);
-      if(video)data.set('video',video.file);
+      if(videoTrack) {
+        for(const id of new Set(videoTrack.map(clip=>clip.mediaId)))data.set(`clip-${id}`,sources[id].file);
+      } else if(video)data.set('video',video.file);
       if(gpuExport)data.set('gpu','1');
       const started=await fetch('/api/render',{method:'POST',body:data,signal:upload.signal});
       if(!started.ok){const body=await started.json().catch(()=>({}));throw Error(body.error || `Không gửi được project (HTTP ${started.status}).`);}
@@ -454,9 +602,14 @@ export default function Studio() {
     finally {activeJobId.current=null;forgetJobId();setRenderJob(null);setBusy(false);}
   });
 
-  const applySession=useEffectEvent((snapshot:SessionSnapshot)=>{
+  const applySession=useEffectEvent((snapshot:SessionSnapshot,clips:Awaited<ReturnType<typeof loadClipMedia>>)=>{
     const loaded=parseProjectFile(snapshot.record.json);
-    edit({type:'reset',cues:loaded.cues});
+    setExpectedMedia(loaded.media);
+    setLegacyTiming({length:loaded.durationInFrames,videoLength:loaded.videoDurationInFrames});
+    setSources(Object.fromEntries(Object.entries(clips).map(([id,entry])=>[
+      id,{file:new File([entry.blob],entry.name,{type:entry.blob.type}),src:URL.createObjectURL(entry.blob),seconds:entry.seconds},
+    ])));
+    edit({type:'reset',cues:loaded.cues,videoTrack:loaded.videoTrack});
     setDraft(cuesToLrc(loaded.cues));
     setWide(loaded.width===1280);
     setEffect(loaded.effect ?? PRESETS.classic);
@@ -471,7 +624,7 @@ export default function Studio() {
     setSessionApplied(applied=>applied+1);
     for (const kind of ['audio','video'] as const) {
       const entry=snapshot.media[kind];
-      if(!entry || !Number.isFinite(entry.seconds) || entry.seconds<1/FPS)continue;
+      if(!entry || entry.name!==loaded.media[kind] || !Number.isFinite(entry.seconds) || entry.seconds<1/FPS)continue;
       setLocalMedia(kind,{file:new File([entry.blob],entry.name),src:URL.createObjectURL(entry.blob),seconds:entry.seconds});
     }
     resetPlayhead();setFollowing(true);
@@ -484,30 +637,37 @@ export default function Studio() {
     try {
       // The preview drops markers past the current duration; the session must
       // keep every section the user placed, exactly like the .json file does.
-      const record=buildSessionRecord({project:{...project,sections},cues,length,renderRange,media:{audio:audio?.file.name ?? null,video:video?.file.name ?? null},view,savedAt:Date.now()});
+      const record=buildSessionRecord({project:{...project,sections},cues,length,renderRange,media:withMedia?{audio:audio?.file.name ?? expectedMedia.audio,video:videoMode?null:video?.file.name ?? expectedMedia.video}:persistedMedia,view,savedAt:Date.now()});
       const outcome=await saveSession(db,{record,media:withMedia?{audio:audio?{name:audio.file.name,seconds:audio.seconds,blob:audio.file}:null,video:video?{name:video.file.name,seconds:video.seconds,blob:video.file}:null}:undefined});
       setSessionSavedAt(outcome.record.savedAt);
-      setSessionQuota(outcome.quotaExceeded);
+      if(outcome.quotaExceeded)setSessionQuota(true);
     } catch {
       // A failed autosave must never interrupt editing: the last good session stays.
     }
   });
 
-  function restartSession() {
+  function restartSession(mode:'demo'|'video'='demo') {
+    if(mode==='video'&&(canUndo(editor)||videoTrack?.length||audio||video||missingMedia)&&!window.confirm('Tạo project video mới và thay phiên hiện tại? Hãy lưu JSON trước nếu muốn giữ bản dựng.'))return;
+    ++projectGeneration.current;setReadingClips(false);
+    setLegacyTiming(null);
+    closePerspective();
+    setSources({});
+    window.setTimeout(()=>Object.values(sources).forEach(media=>URL.revokeObjectURL(media.src)),0);
     const db=sessionDb.current;
     if(db)void clearSession(db).catch(()=>{});
     forgetJobId();
     sessionRestoring.current=true;
     setSessionSavedAt(null);setSessionQuota(false);
-    edit({type:'reset',cues:demoCues});
-    setDraft(sample);setWide(false);setEffect(PRESETS.whisper);setSections([]);setShowSections(false);
+    edit({type:'reset',cues:mode==='video'?[]:demoCues,videoTrack:mode==='video'?[]:undefined});
+    setDraft(mode==='video'?'':sample);setWide(false);setEffect(mode==='video'?PRESETS.classic:PRESETS.whisper);setSections([]);setShowSections(false);
     setRenderMode('all');setRangeStart('0');setRangeEnd(null);
     removeMedia('audio');removeMedia('video');
     restoredView.current=null;
     timelineFitted.current=true;
     setView(createView(DEMO_SECONDS,trackWidth()));
     sessionRestoring.current=false;
-    setError('');setNotice('Đã bắt đầu lại với project mẫu.');
+    if(mode==='video')setInspectorTab('media');
+    setError('');setNotice(mode==='video'?'Project video mới. Thêm clip để bắt đầu.':'Đã bắt đầu lại với project mẫu.');
   }
 
   const tapFromKeyboard = useEffectEvent((e: KeyboardEvent) => {
@@ -577,7 +737,11 @@ export default function Studio() {
         sessionDb.current=db;
         sessionRestoring.current=true;
         const snapshot=await loadSession(db);
-        if(snapshot && !cancelled)applySession(snapshot);
+        if(snapshot && !cancelled) {
+          const {videoTrack}=parseProjectFile(snapshot.record.json);
+          const clips=await loadClipMedia(db,(videoTrack ?? []).map(clip=>clip.mediaId));
+          if(!cancelled)applySession(snapshot,clips);
+        }
         sessionRestoring.current=false;
         setSessionSavedAt(snapshot?.record.savedAt ?? null);
         const jobId=readJobId();
@@ -593,7 +757,7 @@ export default function Studio() {
     window.clearTimeout(autosaveTimer.current);
     autosaveTimer.current=window.setTimeout(()=>void persistSession({}),500);
     return ()=>window.clearTimeout(autosaveTimer.current);
-  },[cues,effect,sections,showSections,wide,renderMode,rangeStart,rangeEnd,length]);
+  },[cues,effect,sections,showSections,wide,renderMode,rangeStart,rangeEnd,length,videoTrack,expectedMedia]);
   useEffect(()=>{
     // Zoom and scroll are not worth a write per drag, but they should not be lost
     // when the tab is closed or hidden.
@@ -607,19 +771,24 @@ export default function Studio() {
   return <div className="studio">
     <header className="topbar">
       <div className="identity"><span className="mark" aria-hidden="true">R</span><div><h1>Remain Studio</h1><span>VIDEO CHỮ CHUYỂN ĐỘNG</span></div></div>
-      <div className="toolbar"><label>Khung hình<select value={wide?'wide':'tall'} onChange={e=>setWide(e.target.value==='wide')}><option value="tall">9:16 · Dọc</option><option value="wide">16:9 · Ngang</option></select></label>
-      <Button type="button" className="px-3 font-semibold min-[781px]:px-4" disabled={busy || Boolean(rangeError) || (!visibleCues.length && !audio && !video)} onClick={exportClip}>{busy?(renderJob?`Đang render… ${Math.round(renderJob.progress*100)}%`:'Đang render…'):'Xuất MP4'}</Button>{busy && <Button type="button" variant="outline" className="px-3 min-h-[44px] min-[781px]:px-4" onClick={cancelRender}>Huỷ render</Button>}</div>
+      <div className="toolbar"><Button type="button" variant="outline" disabled={busy} onClick={()=>restartSession('video')}>Project video mới</Button><label>Khung hình<select value={wide?'wide':'tall'} onChange={e=>setWide(e.target.value==='wide')}><option value="tall">9:16 · Dọc</option><option value="wide">16:9 · Ngang</option></select></label>
+      <Button type="button" className="px-3 font-semibold min-[781px]:px-4" disabled={busy || Boolean(rangeError) || exportUnavailable} onClick={exportClip}>{busy?(renderJob?`Đang render… ${Math.round(renderJob.progress*100)}%`:'Đang render…'):'Xuất MP4'}</Button>{busy && <Button type="button" variant="outline" className="px-3 min-h-[44px] min-[781px]:px-4" onClick={cancelRender}>Huỷ render</Button>}</div>
     </header>
     <main className="workspace">
       <section className="viewer min-[781px]:self-start" aria-label="Preview">
         <div className="section-bar"><h2>Preview</h2><span className="badge">{PRESET_LABELS[effect.preset==='web-match'?'web-match':(visibleCues[liveLine]?.effect ?? effect).preset].split(' · ')[0]}</span></div>
         <div className={'stage '+(wide?'wide':'tall')}>
-          <Player ref={player} component={Scene} inputProps={inputProps} fps={FPS} durationInFrames={length} compositionWidth={project.width} compositionHeight={project.height} style={{width:'100%',aspectRatio:`${project.width} / ${project.height}`}} controls={false} spaceKeyToPlayOrPause={false} acknowledgeRemotionLicense />
+          <div style={{position:'relative',width:'100%',aspectRatio:`${project.width} / ${project.height}`}}>
+            <Player ref={player} component={Scene} inputProps={inputProps} fps={FPS} durationInFrames={length} compositionWidth={project.width} compositionHeight={project.height} style={{width:'100%',height:'100%'}} controls={false} spaceKeyToPlayOrPause={false} acknowledgeRemotionLicense />
+            {(missingLegacyVideo||spans.some(span=>span.startFrame<=frame&&frame<span.endFrame&&missingSources.has(span.mediaId)))&&<div role="status" style={{position:'absolute',top:8,left:8,background:'#140f12',padding:'4px 8px'}}>Thiếu media</div>}
+            {perspectiveCue&&perspectiveLine!==null&&effect.preset!=='web-match'&&!playing&&<PerspectiveEditor key={perspectiveLine} corners={perspectiveCue.perspective?.corners ?? defaultLyricCorners()} onChange={setPerspectiveDraft} onCommit={corners=>updatePerspective(perspectiveLine,corners)}/>}
+          </div>
         </div>
         <div className="transport"><Button type="button" variant="outline" size="icon" onClick={()=>seek(0)} title="Về đầu clip" aria-label="Về đầu clip">⏮</Button><Button type="button" variant="outline" className="play-toggle" onClick={togglePlayback}>{playing?'Tạm dừng':'Phát'}</Button><output>{seconds(time)} <span>/ {seconds(duration)}</span></output></div>
+        {aspectNeedsReview&&effect.preset!=='web-match'&&<p className="hint" role="status">Tỷ lệ khung đã đổi. Kiểm tra lại vị trí chữ phối cảnh.</p>}
       </section>
       <aside className="inspector" aria-label="Nội dung project">
-        <Tabs value={inspectorTab} onValueChange={setInspectorTab} activationMode="manual" className="inspector-tabs">
+        <Tabs value={inspectorTab} onValueChange={tab=>{setInspectorTab(tab);if(tab!=='effects')closePerspective();}} activationMode="manual" className="inspector-tabs">
           <TabsList aria-label="Công cụ chỉnh sửa">
             <TabsTrigger value="sync">Canh từ</TabsTrigger>
             <TabsTrigger value="media">Media</TabsTrigger>
@@ -637,9 +806,13 @@ export default function Studio() {
         <section className="panel"><div className="section-bar"><h2>Media</h2><span className="subtle">Nhạc 25 MiB · Video 100 MiB</span></div>
           <label htmlFor="audio-file">Chọn nhạc từ máy</label><Input id="audio-file" type="file" accept="audio/*,.mp3,.m4a,.wav,.flac,.ogg" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void chooseMedia('audio',file);}}/>
           {audio && <div className="flex min-w-0 items-center justify-between gap-2.5"><span className="filename">{audio.file.name}</span><Button type="button" variant="outline" size="sm" onClick={()=>removeMedia('audio')}>Gỡ nhạc</Button></div>}
+          {missingAudio&&<p className="hint">Thiếu nhạc: {expectedMedia.audio} <Button type="button" variant="outline" size="sm" onClick={()=>removeMedia('audio')}>Bỏ nhạc thiếu</Button></p>}
+          {videoMode?<><label htmlFor="video-clips-file">Thêm clip video</label><Input id="video-clips-file" type="file" multiple disabled={readingClips} accept="video/*,.mp4,.mov,.webm,.mkv" onChange={e=>{const files=Array.from(e.currentTarget.files ?? []);e.currentTarget.value='';void chooseClips(files);}}/>
+          <p className="hint">{videoTrack.length} clip · tối đa 100 MiB video mỗi project. Có thể bật tiếng riêng cho từng clip.</p></>:<>
           <label htmlFor="video-file">Chọn video nền</label><Input id="video-file" type="file" accept="video/*,.mp4,.mov,.webm,.mkv" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void chooseMedia('video',file);}}/>
           {video && <div className="flex min-w-0 items-center justify-between gap-2.5"><span className="filename">{video.file.name}</span><Button type="button" variant="outline" size="sm" onClick={()=>removeMedia('video')}>Gỡ video</Button></div>}
-          {video && <p className="hint">{audio?'Nhạc riêng thay âm thanh gốc của video.':'Đang dùng âm thanh gốc của video.'}</p>}
+          {missingLegacyVideo&&<p className="hint">Thiếu video: {expectedMedia.video} <Button type="button" variant="outline" size="sm" onClick={()=>removeMedia('video')}>Bỏ video thiếu</Button></p>}
+          {video && <p className="hint">{audio?'Nhạc riêng thay âm thanh gốc của video.':'Đang dùng âm thanh gốc của video.'}</p>}</>}
         </section>
           </TabsContent>
           <TabsContent value="lyrics" forceMount>
@@ -648,6 +821,15 @@ export default function Studio() {
         </section>
           </TabsContent>
           <TabsContent value="effects" forceMount>
+        {cue&&effect.preset!=='web-match'&&<section className="panel" aria-label="Phối cảnh dòng chữ">
+          <div className="section-bar"><h2>Phối cảnh</h2><span className="subtle">Dòng {line+1}</span></div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" variant="outline" onClick={()=>perspectiveLine===line?closePerspective():openPerspective(line)}>{perspectiveLine===line?'Xong căn chữ':'Căn phối cảnh dòng'}</Button>
+            {cue.perspective&&<Button type="button" variant="outline" onClick={()=>{setPerspectiveDraft(null);updatePerspective(line);}}>Đặt lại phối cảnh</Button>}
+            {videoTrack&&videoTrack.length>0&&<Button type="button" variant="outline" onClick={()=>toggleAttachment(line)}>{cue.attachment?'Đưa về lời theo nhạc':'Gắn vào clip'}</Button>}
+          </div>
+          {cue.attachment&&<span className="hint">{firstSceneFrame(cue)?'Dòng này bám cảnh.':'Dòng này đang nằm ngoài đoạn clip giữ lại.'}</span>}
+        </section>}
         <EffectsPanel effect={effect} lineLabel={cue?`Dòng ${line+1}: ${cue.text}`:undefined} lineEffect={cue?.effect} lineMotion={cue?.motion} onMotion={editMotion}
           onChange={editEffect} onResetLine={resetLineEffect} hook={cue?.hook} onToggleHook={toggleHook} emphasisWord={emphasisWord?.text} emphasized={emphasisWord?.emphasis===true} onEmphasis={toggleEmphasis}
           sections={sections} showSections={showSections} onShowSections={setShowSections} time={time} onAddSection={addSection}
@@ -655,7 +837,7 @@ export default function Studio() {
           </TabsContent>
           <TabsContent value="project" forceMount>
         <section className="panel"><div className="section-bar"><h2>Project</h2><span className="subtle">{sessionSavedAt?`đã tự lưu lúc ${new Date(sessionSavedAt).toLocaleTimeString('vi-VN')}`:'chưa tự lưu'}</span></div>
-          <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" onClick={saveProject}>Lưu project</Button><label className="filebutton">Nạp project<input id="project-file" type="file" accept=".json,application/json" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void loadProject(file);}}/></label><Button type="button" variant="outline" onClick={restartSession}>Bắt đầu lại</Button></div>
+          <div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" onClick={saveProject}>Lưu project</Button><label className="filebutton">Nạp project<input id="project-file" type="file" accept=".json,application/json" onChange={e=>{const file=e.currentTarget.files?.[0];e.currentTarget.value='';if(file)void loadProject(file);}}/></label><Button type="button" variant="outline" onClick={()=>restartSession()}>Bắt đầu lại</Button></div>
           <p className="hint">Studio tự lưu lời, mốc từ, khổ khung, phạm vi xuất, zoom cùng nhạc và video trong trình duyệt. Reload trang không mất project.</p>
           <p className="hint">File .json để dành hoặc chuyển máy; nó không chứa nhạc và video.</p>
           {sessionQuota && <p className="error" role="status">{QUOTA_NOTICE}</p>}
@@ -675,7 +857,8 @@ export default function Studio() {
         <span className="subtle">{seconds(time)} / {seconds(duration)} · {FPS} fps</span></div></div>
       <TimelineTracks viewport={timelineViewport} viewportWidth={timelineWidth} view={view} length={length} frame={frame}
         cues={visibleCues} allCues={cues} liveLine={liveLine} selectedLine={!following && selection ? line : null} snapEnabled={snapEnabled}
-        video={video && {name:video.file.name,seconds:(videoLength ?? 0)/FPS}} audio={audio && {name:audio.file.name,seconds:audio.seconds,src:audio.src}}
+        video={video ? {name:video.file.name,seconds:(videoLength ?? 0)/FPS}:missingLegacyVideo&&videoLength?{name:`Thiếu media: ${expectedMedia.video}`,seconds:videoLength/FPS}:null} audio={audio && {name:audio.file.name,seconds:audio.seconds,src:audio.src}}
+        videoEdits={videoTrack?{clips:videoTrack,missing:missingSources,onMove:(id,toIndex)=>commitTrack(clips=>moveClip(clips,id,toIndex)),onTrim:(id,inFrame,outFrame)=>commitTrack(clips=>trimClip(clips,id,inFrame,outFrame)),onSplit:(id,timelineFrame)=>{const newId=createClipId();commitTrack(clips=>splitClip(clips,id,timelineFrame,newId),lines=>splitCueAttachments(lines,id,newId));},onDelete:id=>commitTrack(clips=>removeClip(clips,id),lines=>removeCueAttachments(lines,id)),onMute:(id,muted)=>commitTrack(clips=>muteClip(clips,id,muted)),onRelink:(id,file)=>void chooseClips([file],id)}:undefined}
         onScroll={scrollTimeline} onSeek={seek} onPickCue={pickTimelineCue} onCommit={next=>edit({type:'commit',cues:next})}/>
       </section>
     </main>
