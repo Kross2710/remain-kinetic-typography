@@ -84,7 +84,9 @@ Trong mục "Thiết lập xuất" có checkbox "Vẽ khung hình bằng iGPU". 
 
 ## Timeline
 
-Thước thời gian và ba làn Video, Nhạc, Lời cuộn ngang cùng nhau. Bấm hoặc kéo trên thước để tua theo khung hình; bấm nền một làn để tua, hoặc bấm đoạn lời để chọn dòng canh từ. Dùng Tab đến thanh vị trí rồi dùng phím mũi tên để tua bằng bàn phím. Khi khung timeline có focus, dùng Home/End để tới đoạn lời đầu/cuối, kể cả khi không có đoạn nào trong vùng nhìn. Trên một đoạn lời, dùng ←/→ để chuyển đoạn; Enter chọn và tua đến đoạn đó. Ctrl/⌘ + cuộn phóng quanh con trỏ, còn **Vừa khung** đưa timeline về đầu và thu vừa khung nếu giới hạn zoom cho phép.
+Thước thời gian và ba làn Video, Nhạc, Lời cuộn ngang cùng nhau. Bấm hoặc kéo trên thước để tua theo khung hình; bấm nền một làn để tua, hoặc bấm đoạn lời để chọn dòng canh từ. Kéo thân đoạn lời để dời mốc dòng cùng các từ; kéo mép phải để sửa ranh giới với dòng tiếp theo (không có mốc kết thúc riêng). Chọn dòng, đặt playhead trước từ cần tách rồi bấm **Tách tại từ kế tiếp**. **Bắt dính mốc** mặc định tắt; bật để hút về mốc dòng gần đó, lưới giây và khung hình. Mỗi lần kéo tạo một bước Hoàn tác; thao tác vượt qua mốc từ/dòng khác bị từ chối.
+
+Dùng Tab đến thanh vị trí rồi dùng phím mũi tên để tua bằng bàn phím. Khi khung timeline có focus, dùng Home/End để tới đoạn lời đầu/cuối, kể cả khi không có đoạn nào trong vùng nhìn. Trên một đoạn lời, dùng ←/→ để chuyển đoạn; Enter chọn và tua đến đoạn đó; Shift+←/→ dời dòng một khung hình; Alt+Shift+←/→ sửa ranh giới phải một khung hình. Ctrl/⌘ + cuộn phóng quanh con trỏ, còn **Vừa khung** đưa timeline về đầu và thu vừa khung nếu giới hạn zoom cho phép.
 
 ## Kiểm thử
 

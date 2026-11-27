@@ -9,6 +9,7 @@ import {Tabs,TabsContent,TabsList,TabsTrigger} from '@/components/ui/tabs';
 import {LyricSyncPanel} from '@/components/LyricSyncPanel';
 import {EffectsPanel} from '@/components/EffectsPanel';
 import {TimelineTracks} from '@/components/TimelineTracks';
+import {splitCue} from './timeline.mjs';
 import {MAX_SECTIONS,PRESETS,PRESET_LABELS,type Effect,type MotionId,type SectionKind,type SongSection} from './effects.mjs';
 import {canRedo,canUndo,clampView,contentWidth,createEditor,createView,cuesToLrc,editorReducer,MAX_PROJECT_FILE_BYTES,parseProjectFile,serializeProject,xToTime,zoomView,type View} from './editor.mjs';
 import {buildSessionRecord,clearSession,forgetJobId,loadSession,openStudioDb,QUOTA_NOTICE,readJobId,rememberJobId,saveSession,storedLengthFrames,type SessionSnapshot} from './session.mjs';
@@ -70,6 +71,7 @@ export default function Studio() {
   const timelineSection=useRef<HTMLElement>(null);
   const timelineViewport=useRef<HTMLDivElement>(null);
   const [timelineWidth,setTimelineWidth]=useState(0);
+  const [snapEnabled,setSnapEnabled]=useState(false);
   const timelineFitted=useRef(true);
   const length=timelineLength(audio?.seconds ?? null,video?.seconds ?? null);
   const videoLength=video ? timelineLength(null,video.seconds) : undefined;
@@ -295,6 +297,13 @@ export default function Studio() {
   }
   function undo(){if(canUndo(editor))edit({type:'undo'});}
   function redo(){if(canRedo(editor))edit({type:'redo'});}
+  function splitSelectedCue(){
+    if (!cue || following) return;
+    const index=cue.words.findIndex((w,j)=>j>0 && w.start>time && w.start>cue.words[j-1].start);
+    if (index<0) {setError('Đặt playhead trước ranh giới từ muốn tách.');return;}
+    try {edit({type:'commit',cues:splitCue(cues,line,index)});select([line+1,0]);setError('');}
+    catch(e){setError(errText(e));}
+  }
   function editEffect(value:Effect,scope:'project'|'line') {
     if(scope==='project')setEffect({...value,motion:effect.motion});
     else if(cue && value.preset!=='web-match' && effect.preset!=='web-match')edit({type:'commit',cues:cues.map((c,i)=>i===line?{...c,effect:{...value,motion:undefined}}:c)});
@@ -658,14 +667,16 @@ export default function Studio() {
       <div className="section-bar"><h2>Timeline</h2><div className="flex flex-wrap items-center gap-1.5">
         <Button type="button" variant="outline" size="sm" disabled={!canUndo(editor)} onClick={undo} title="Hoàn tác (Ctrl+Z)">Hoàn tác</Button>
         <Button type="button" variant="outline" size="sm" disabled={!canRedo(editor)} onClick={redo} title="Làm lại (Ctrl+Shift+Z)">Làm lại</Button>
+        <Button type="button" variant="outline" size="sm" disabled={following || !cue || cues.length>=1000} onClick={splitSelectedCue} title="Chọn dòng, đặt playhead trước từ rồi tách">Tách tại từ kế tiếp</Button>
+        <label className="timeline-snap"><input type="checkbox" checked={snapEnabled} onChange={e=>setSnapEnabled(e.target.checked)}/>Bắt dính mốc</label>
         <Button type="button" variant="outline" size="sm" onClick={()=>zoomTimeline(1/1.4)} aria-label="Thu nhỏ timeline" title="Thu nhỏ (-)">−</Button>
         <Button type="button" variant="outline" size="sm" onClick={()=>zoomTimeline(1.4)} aria-label="Phóng to timeline" title="Phóng to (+)">+</Button>
         <Button type="button" variant="outline" size="sm" onClick={()=>fitTimeline()} title="Vừa khung (F)">Vừa khung</Button>
         <span className="subtle">{seconds(time)} / {seconds(duration)} · {FPS} fps</span></div></div>
       <TimelineTracks viewport={timelineViewport} viewportWidth={timelineWidth} view={view} length={length} frame={frame}
-        cues={visibleCues} liveLine={liveLine} selectedLine={!following && selection ? line : null}
+        cues={visibleCues} allCues={cues} liveLine={liveLine} selectedLine={!following && selection ? line : null} snapEnabled={snapEnabled}
         video={video && {name:video.file.name,seconds:(videoLength ?? 0)/FPS}} audio={audio && {name:audio.file.name,seconds:audio.seconds}}
-        onScroll={scrollTimeline} onSeek={seek} onPickCue={pickTimelineCue}/>
+        onScroll={scrollTimeline} onSeek={seek} onPickCue={pickTimelineCue} onCommit={next=>edit({type:'commit',cues:next})}/>
       </section>
     </main>
     <section className="export-options" aria-label="Thiết lập xuất video">

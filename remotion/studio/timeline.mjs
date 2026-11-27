@@ -1,6 +1,46 @@
 import {timeToX, xToTime} from './editor.mjs';
 import {FPS} from './project.mjs';
 
+export function moveCue(cues,index,start,duration) {
+  const cue=cues[index];
+  const delta=start-cue?.start;
+  const end=cues[index+1]?.start ?? duration;
+  if (!cue || !Number.isFinite(start) || start<0 || start<=(cues[index-1]?.words.at(-1).start ?? -1) ||
+      start>=end || cue.words.at(-1).start+delta>=end) throw Error('Không thể di chuyển dòng qua từ hoặc ranh giới dòng khác.');
+  if (delta===0) return cues;
+  return cues.map((item,i)=>i===index?{...item,start,words:item.words.map(w=>({...w,start:w.start+delta}))}:item);
+}
+
+export function trimCue(cues,index,boundary,duration) {
+  const before=cues[index], next=cues[index+1];
+  const end=cues[index+2]?.start ?? duration;
+  if (!before || !next || !Number.isFinite(boundary) || boundary<=before.words.at(-1).start ||
+      boundary>=end || next.words.slice(1).some(w=>w.start<boundary && w.confirmed))
+    throw Error('Ranh giới không thể đè lên từ đã canh hoặc dòng kế tiếp.');
+  if (boundary===next.start) return cues;
+  return cues.map((cue,i)=>i===index+1?{...cue,start:boundary,words:cue.words.map((w,j)=>({...w,start:j===0?boundary:Math.max(boundary,w.start)}))}:cue);
+}
+
+export function splitCue(cues,index,wordIndex) {
+  const cue=cues[index];
+  if (!cue || cues.length>=1000 || !Number.isInteger(wordIndex) || wordIndex<=0 || wordIndex>=cue.words.length ||
+      cue.words[wordIndex].start<=cue.start || cue.words[wordIndex-1].start>=cue.words[wordIndex].start)
+    throw Error('Chỉ có thể tách tại ranh giới giữa hai từ có mốc khác nhau.');
+  const left=cue.words.slice(0,wordIndex), right=cue.words.slice(wordIndex);
+  return [...cues.slice(0,index),{...cue,text:left.map(w=>w.text).join(' '),words:left},
+    {...cue,text:right.map(w=>w.text).join(' '),start:right[0].start,words:right},...cues.slice(index+1)];
+}
+
+export function snapTime(time,{enabled=false,starts=[],pxPerSec}) {
+  if (!enabled) return time;
+  const tolerance=8/pxPerSec;
+  const cue=starts.reduce((best,start)=>Math.abs(start-time)<Math.abs(best-time)?start:best,Infinity);
+  if (Math.abs(cue-time)<=tolerance) return cue;
+  const second=Math.round(time);
+  if (Math.abs(second-time)<=tolerance) return second;
+  return Math.round(time*FPS)/FPS;
+}
+
 // At the editor's minimum scale (10 px/s), a 10s label still fits.
 export function tickSteps(pxPerSec) {
   return {seconds: [1, 2, 5, 10].find(step => step * pxPerSec >= 60) ?? 10, frames: pxPerSec >= 100};
