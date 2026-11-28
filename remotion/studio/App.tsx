@@ -14,8 +14,8 @@ import {EffectsPanel} from '@/components/EffectsPanel';
 import {TimelineTracks} from '@/components/TimelineTracks';
 import {splitCue} from './timeline.mjs';
 import {MAX_SECTIONS,PRESETS,PRESET_LABELS,type Effect,type MotionId,type SectionKind,type SongSection} from './effects.mjs';
-import {canRedo,canUndo,clampView,contentWidth,createEditor,createView,cuesToLrc,editorReducer,MAX_PROJECT_FILE_BYTES,parseProjectFile,serializeProject,xToTime,zoomView,type View} from './editor.mjs';
-import {buildSessionRecord,clearSession,forgetJobId,loadClipMedia,loadSession,openStudioDb,QUOTA_NOTICE,readJobId,rememberJobId,saveClipMedia,saveSession,storedLengthFrames,type MediaSnapshot,type SessionSnapshot} from './session.mjs';
+import {canRedo,canUndo,clampView,contentWidth,createEditor,createView,cuesToLrc,editorReducer,MAX_PROJECT_FILE_BYTES,parseProjectFile,serializeProject,xToTime,zoomView,type EditorAction,type EditorState,type View} from './editor.mjs';
+import {buildSessionRecord,forgetJobId,loadSession,openStudioDb,QUOTA_NOTICE,readJobId,rememberJobId,saveSession,storedLengthFrames,type MediaSnapshot,type SessionSnapshot,type StoredMedia} from './session.mjs';
 import {clipSpans,moveClip,muteClip,removeClip,splitClip,trimClip,validateVideoTrack,videoTrackFrames,type VideoClip} from './video-track.mjs';
 
 const sample='[00:00.00]Một nhịp thở\n[00:05.00]Rồi chữ bắt đầu chuyển động\n[00:12.00]Mỗi từ theo một nhịp\n[00:22.00]Đến lượt bạn kể chuyện';
@@ -24,7 +24,25 @@ const seconds=(n:number)=>n.toFixed(2)+'s';
 const errText=(e:unknown)=>e instanceof Error?e.message:String(e);
 const createClipId=()=>Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join('');
 type MediaKind='audio'|'video';
-type LocalMedia={file:File;src:string;seconds:number};
+type LocalMedia={file:File;src:string;seconds:number;version:string};
+const storeMedia=(media:LocalMedia):StoredMedia=>({name:media.file.name,seconds:media.seconds,blob:media.file,version:media.version});
+const restoreMedia=(entry:StoredMedia):LocalMedia=>({file:new File([entry.blob],entry.name,{type:entry.blob.type}),src:URL.createObjectURL(entry.blob),seconds:entry.seconds,version:entry.version ?? createClipId()});
+type Sources=Record<string,LocalMedia>;
+type StudioEditState={editor:EditorState;sources:Sources};
+type StudioEditAction=(EditorAction & {sources?:Sources}) | {type:'relink';sources:Sources};
+function studioEdit(state:StudioEditState,action:StudioEditAction):StudioEditState {
+  const editor=action.type==='relink'?state.editor:editorReducer(state.editor,action);
+  if(editor===state.editor&&!action.sources)return state;
+  const sources=action.type==='reset'?(action.sources ?? state.sources):action.sources?{...state.sources,...action.sources}:state.sources;
+  const keys=Object.keys(sources);
+  if(!keys.length)return {editor,sources};
+  const ids=new Set<string>();
+  const tracks=new Set([editor,...editor.past,...editor.future].map(snapshot=>snapshot.videoTrack));
+  for(const track of tracks) {
+    for(const clip of track ?? [])ids.add(clip.mediaId);
+  }
+  return {editor,sources:keys.every(id=>ids.has(id))?sources:Object.fromEntries(keys.filter(id=>ids.has(id)).map(id=>[id,sources[id]]))};
+}
 async function probeMedia(kind:MediaKind,file:File):Promise<LocalMedia> {
   const isAudio=kind==='audio';
   if(file.size>(isAudio?MAX_AUDIO_BYTES:MAX_VIDEO_BYTES)) throw Error(isAudio?'File nhạc tối đa 25 MiB.':'File video tối đa 100 MiB.');
@@ -39,7 +57,7 @@ async function probeMedia(kind:MediaKind,file:File):Promise<LocalMedia> {
     });
     if(!Number.isFinite(seconds) || seconds<1/FPS || (probe instanceof HTMLVideoElement && !probe.videoWidth)) throw Error(unreadable);
     if(seconds>MAX_SECONDS) throw Error('Studio hỗ trợ timeline tối đa 2 giờ.');
-    return {file,src,seconds};
+    return {file,src,seconds,version:createClipId()};
   } catch(error){URL.revokeObjectURL(src);throw error;}
   finally {probe.onloadedmetadata=null;probe.onerror=null;probe.removeAttribute('src');probe.load();}
 }
@@ -53,12 +71,10 @@ export default function Studio() {
   const player=useRef<PlayerRef>(null);
   const tapPanel=useRef<HTMLElement>(null);
   const uploadSeq=useRef({audio:0,video:0});
-  const mediaUrls=useRef<Partial<Record<MediaKind,string>>>({});
   const mediaState=useRef<{audio:LocalMedia|null; video:LocalMedia|null}>({audio:null,video:null});
   const sessionRestoring=useRef(false);
   const [audio,setAudio]=useState<LocalMedia|null>(null);
   const [video,setVideo]=useState<LocalMedia|null>(null);
-  const [sources,setSources]=useState<Record<string,LocalMedia>>({});
   const [expectedMedia,setExpectedMedia]=useState<MediaSnapshot>({audio:null,video:null});
   const [legacyTiming,setLegacyTiming]=useState<{length:number;videoLength?:number}|null>(null);
   const projectGeneration=useRef(0);
@@ -71,7 +87,7 @@ export default function Studio() {
   const [showSections,setShowSections]=useState(false);
   const [draft,setDraft]=useState(sample);
   const [inspectorTab,setInspectorTab]=useState('sync');
-  const [editor,edit]=useReducer(editorReducer,demoCues,createEditor);
+  const [{editor,sources},edit]=useReducer(studioEdit,demoCues,(cues):StudioEditState=>({editor:createEditor(cues),sources:{}}));
   const cues=editor.cues;
   const [selection,select]=useState<[number,number]|null>([0,0]);
   const [following,setFollowing]=useState(true);
@@ -82,11 +98,14 @@ export default function Studio() {
   const activeJobId=useRef<string|null>(null);
   const uploadAbort=useRef<AbortController|null>(null);
   const sessionDb=useRef<IDBDatabase|null>(null);
+  const [sessionReady,setSessionReady]=useState(false);
   const restoredView=useRef<View|null>(null);
   // Bumped when a session is applied, so a restored zoom is consumed even when
   // the restored timeline is the same length the page already had.
   const [sessionApplied,setSessionApplied]=useState(0);
-  const autosaveTimer=useRef(0);
+  const [saveNow,requestSave]=useReducer((revision:number)=>revision+1,0);
+  const handledImmediateSave=useRef(0);
+  const pendingAutosave=useRef(0);
   const [sessionSavedAt,setSessionSavedAt]=useState<number|null>(null);
   const [sessionQuota,setSessionQuota]=useState(false);
   const [notice,setNotice]=useState('');
@@ -133,8 +152,37 @@ export default function Studio() {
     const edited=perspectiveDraft&&perspectiveLine!==null?source.map((line,index)=>index===perspectiveLine?{...line,perspective:{corners:perspectiveDraft,aspect:editAspect}}:line):source;
     return {...project,cues:edited};
   },[cues,visibleCues,videoMode,perspectiveDraft,perspectiveLine,editAspect,project]);
-  const videoSources=useMemo(()=>Object.fromEntries(Object.entries(sources).map(([id,media])=>[id,media.src])),[sources]);
+  const currentSources=useMemo(()=>Object.fromEntries([...new Set((videoTrack ?? []).map(clip=>clip.mediaId))]
+    .filter(id=>Object.prototype.hasOwnProperty.call(sources,id)).map(id=>[id,sources[id]])),[videoTrack,sources]);
+  const videoSources=useMemo(()=>Object.fromEntries(Object.entries(currentSources).map(([id,media])=>[id,media.src])),[currentSources]);
   const inputProps=useMemo(()=>({project:previewProject,audioSrc:audio?.src ?? null,videoSrc:videoMode?null:video?.src ?? null,videoSources}),[previewProject,audio,video,videoMode,videoSources]);
+  const previewStage=useRef<HTMLDivElement>(null);
+  const committedUrls=useRef(new Set<string>());
+  const retiredUrls=useRef(new Set<string>());
+  useEffect(()=>{
+    const next=new Set([...Object.values(sources),audio,video].flatMap(media=>media?[media.src]:[]));
+    for(const url of committedUrls.current)if(!next.has(url))retiredUrls.current.add(url);
+    committedUrls.current=next;
+    let timer=0;
+    const retire=()=>{
+      if(!retiredUrls.current.size)return;
+      // React has committed the new inputs, but a recycled media element may
+      // still report the old currentSrc until its browser load algorithm runs.
+      const stage=previewStage.current;
+      const elements=Array.from(stage?.querySelectorAll('video,audio') ?? []) as HTMLMediaElement[];
+      for(const iframe of Array.from(stage?.querySelectorAll('iframe') ?? [])) {
+        elements.push(...Array.from(iframe.contentDocument?.querySelectorAll('video,audio') ?? []) as HTMLMediaElement[]);
+      }
+      const live=new Set(elements.flatMap(media=>[media.src,media.currentSrc].map(url=>url.split('#')[0])));
+      for(const url of retiredUrls.current) {
+        if(next.has(url))retiredUrls.current.delete(url);
+        else if(!live.has(url)){URL.revokeObjectURL(url);retiredUrls.current.delete(url);}
+      }
+      if(retiredUrls.current.size)timer=window.setTimeout(retire,50);
+    };
+    retire();
+    return ()=>window.clearTimeout(timer);
+  },[sources,audio,video]);
   const songCues=useMemo(()=>effect.preset==='web-match'?cues:cues.filter(c=>!c.attachment),[cues,effect.preset]);
   const [songLine,liveWord]=activeAt(songCues,time);
   const liveLine=songLine<0?-1:cues.indexOf(songCues[songLine]);
@@ -240,17 +288,11 @@ export default function Studio() {
     seek(0);
     select([0,0]);
   }
-  function setLocalMedia(kind:MediaKind,media:LocalMedia|null) {
-    const previous=mediaUrls.current[kind];
-    mediaUrls.current[kind]=media?.src;
+  function setLocalMedia(kind:MediaKind,media:LocalMedia|null,save=true) {
     mediaState.current[kind]=media;
     if(kind==='audio')setAudio(media);else setVideo(media);
-    // Picking or removing a file is worth saving at once: the blob is the part
-    // a reload cannot recover on its own.
-    void persistSession({withMedia:true});
-    // Fast Refresh reruns effect cleanup without clearing editor state.
-    // Revoke when replacing/removing a file instead; document unload frees the rest.
-    if(previous) window.setTimeout(()=>URL.revokeObjectURL(previous),0);
+    // Save after React commits so the metadata and files come from the same render.
+    if(save)requestSave();
   }
   async function chooseMedia(kind:MediaKind,file:File) {
     const seq=++uploadSeq.current[kind];
@@ -283,12 +325,14 @@ export default function Studio() {
   async function chooseClips(files:File[], relinkId?:string) {
     if(!files.length||readingClips)return;
     const generation=projectGeneration.current;
-    const added:Record<string,LocalMedia>=Object.create(null);
+    const added:Sources=Object.create(null);
+    let published=false;
     setReadingClips(true);setError('');
     try {
       for(const file of files) {
         const id=relinkId ?? createClipId();
         added[id]=await probeMedia('video',file);
+        if(generation!==projectGeneration.current)return;
       }
       const state=currentEdit.current;
       if(generation!==projectGeneration.current || !state.videoTrack)return;
@@ -299,19 +343,16 @@ export default function Studio() {
       if(relinkId&&!next.some(clip=>clip.mediaId===relinkId))return;
       if(relinkId&&next.some(clip=>clip.mediaId===relinkId&&clip.sourceFrames>timelineLength(null,added[relinkId].seconds)))throw Error('Video chọn lại ngắn hơn nguồn gốc; hãy chọn đúng file.');
       const newSources={...state.sources,...added};
-      const total=[...new Set(next.map(clip=>clip.mediaId))].reduce((size,id)=>size+(newSources[id]?.file.size??0),0);
+      const total=[...new Set(next.map(clip=>clip.mediaId))].reduce((size,id)=>size+(Object.prototype.hasOwnProperty.call(newSources,id)?newSources[id].file.size:0),0);
       if(total>MAX_VIDEO_BYTES)throw Error('Tổng video của project tối đa 100 MiB.');
-      setSources(newSources);
-      if(!relinkId)edit({type:'commit',cues:state.cues,videoTrack:next});
-      const db=sessionDb.current;
-      if(db)for(const [id,media] of Object.entries(added)) {
-        if(!await saveClipMedia(db,id,{blob:media.file,name:media.file.name,seconds:media.seconds}))setSessionQuota(true);
-      }
-      if(generation===projectGeneration.current)setNotice(relinkId?'Đã chọn lại video nguồn.':`Đã thêm ${files.length} clip.`);
+      edit(relinkId?{type:'relink',sources:added}:{type:'commit',cues:state.cues,videoTrack:next,sources:added});
+      published=true;
+      requestSave();
+      setNotice(relinkId?'Đã chọn lại video nguồn.':`Đã thêm ${files.length} clip.`);
     } catch(e){if(generation===projectGeneration.current)setError(errText(e));}
     finally {
       if(generation===projectGeneration.current)setReadingClips(false);
-      window.setTimeout(()=>{for(const [id,media] of Object.entries(added))if(currentEdit.current.sources[id]?.src!==media.src)URL.revokeObjectURL(media.src);},0);
+      if(!published)for(const media of Object.values(added))URL.revokeObjectURL(media.src);
     }
   }
   function removeMedia(kind:MediaKind) {
@@ -473,6 +514,15 @@ export default function Studio() {
     });
   }
   const persistedMedia={audio:audio?.file.name ?? expectedMedia.audio,video:videoMode?null:video?.file.name ?? expectedMedia.video};
+  // Keep only a change token in the save bookkeeping, not a second cache of Files.
+  const sessionContent=useMemo(()=>Symbol('session content'),
+    [project,cues,sections,renderMode,rangeStart,rangeEnd,audio,video,expectedMedia,currentSources]);
+  const lastSave=useRef<{content:typeof sessionContent;applied:number;writeId:string|null}>({content:sessionContent,applied:0,writeId:null});
+  const savingContent=useRef<typeof sessionContent|null>(null);
+  const supersededContent=useRef<typeof sessionContent|null>(null);
+  useLayoutEffect(()=>{
+    if(lastSave.current.applied!==sessionApplied)lastSave.current={...lastSave.current,content:sessionContent,applied:sessionApplied};
+  },[sessionApplied,sessionContent]);
   const exportUnavailable=missingMedia||(videoMode?!videoTrack.length:(!visibleCues.length&&!audio&&!video));
   function saveProject() {
     setError('');setNotice('');
@@ -602,14 +652,12 @@ export default function Studio() {
     finally {activeJobId.current=null;forgetJobId();setRenderJob(null);setBusy(false);}
   });
 
-  const applySession=useEffectEvent((snapshot:SessionSnapshot,clips:Awaited<ReturnType<typeof loadClipMedia>>)=>{
+  const applySession=useEffectEvent((snapshot:SessionSnapshot)=>{
     const loaded=parseProjectFile(snapshot.record.json);
     setExpectedMedia(loaded.media);
     setLegacyTiming({length:loaded.durationInFrames,videoLength:loaded.videoDurationInFrames});
-    setSources(Object.fromEntries(Object.entries(clips).map(([id,entry])=>[
-      id,{file:new File([entry.blob],entry.name,{type:entry.blob.type}),src:URL.createObjectURL(entry.blob),seconds:entry.seconds},
-    ])));
-    edit({type:'reset',cues:loaded.cues,videoTrack:loaded.videoTrack});
+    const sources=Object.fromEntries(Object.entries(snapshot.clips).map(([id,entry])=>[id,restoreMedia(entry)]));
+    edit({type:'reset',cues:loaded.cues,videoTrack:loaded.videoTrack,sources});
     setDraft(cuesToLrc(loaded.cues));
     setWide(loaded.width===1280);
     setEffect(loaded.effect ?? PRESETS.classic);
@@ -625,24 +673,33 @@ export default function Studio() {
     for (const kind of ['audio','video'] as const) {
       const entry=snapshot.media[kind];
       if(!entry || entry.name!==loaded.media[kind] || !Number.isFinite(entry.seconds) || entry.seconds<1/FPS)continue;
-      setLocalMedia(kind,{file:new File([entry.blob],entry.name),src:URL.createObjectURL(entry.blob),seconds:entry.seconds});
+      setLocalMedia(kind,restoreMedia(entry),false);
     }
     resetPlayhead();setFollowing(true);
   });
 
-  const persistSession=useEffectEvent(async ({withMedia=false}:{withMedia?:boolean})=>{
+  const persistSession=useEffectEvent(async ()=>{
     const db=sessionDb.current;
-    if(!db || sessionRestoring.current)return;
-    const {audio,video}=mediaState.current;
+    if(!db||!sessionReady||sessionRestoring.current||savingContent.current===sessionContent||supersededContent.current===sessionContent)return;
+    const generation=projectGeneration.current;
+    const unchanged=lastSave.current.content===sessionContent;
+    savingContent.current=sessionContent;
     try {
       // The preview drops markers past the current duration; the session must
       // keep every section the user placed, exactly like the .json file does.
-      const record=buildSessionRecord({project:{...project,sections},cues,length,renderRange,media:withMedia?{audio:audio?.file.name ?? expectedMedia.audio,video:videoMode?null:video?.file.name ?? expectedMedia.video}:persistedMedia,view,savedAt:Date.now()});
-      const outcome=await saveSession(db,{record,media:withMedia?{audio:audio?{name:audio.file.name,seconds:audio.seconds,blob:audio.file}:null,video:video?{name:video.file.name,seconds:video.seconds,blob:video.file}:null}:undefined});
+      const record=buildSessionRecord({project:{...project,sections},cues,length,renderRange,media:persistedMedia,view,savedAt:Date.now()});
+      const clips=Object.fromEntries(Object.entries(currentSources).map(([id,source])=>[id,storeMedia(source)]));
+      const outcome=await saveSession(db,{record,clips,expectedWriteId:unchanged?lastSave.current.writeId:undefined,
+        media:{audio:audio?storeMedia(audio):null,video:videoMode||!video?null:storeMedia(video)}});
+      if(generation!==projectGeneration.current)return;
+      if(!outcome.committed){supersededContent.current=sessionContent;return;}
+      lastSave.current={content:sessionContent,applied:sessionApplied,writeId:outcome.writeId};
       setSessionSavedAt(outcome.record.savedAt);
       if(outcome.quotaExceeded)setSessionQuota(true);
     } catch {
       // A failed autosave must never interrupt editing: the last good session stays.
+    } finally {
+      if(savingContent.current===sessionContent)savingContent.current=null;
     }
   });
 
@@ -651,21 +708,15 @@ export default function Studio() {
     ++projectGeneration.current;setReadingClips(false);
     setLegacyTiming(null);
     closePerspective();
-    setSources({});
-    window.setTimeout(()=>Object.values(sources).forEach(media=>URL.revokeObjectURL(media.src)),0);
-    const db=sessionDb.current;
-    if(db)void clearSession(db).catch(()=>{});
     forgetJobId();
-    sessionRestoring.current=true;
     setSessionSavedAt(null);setSessionQuota(false);
-    edit({type:'reset',cues:mode==='video'?[]:demoCues,videoTrack:mode==='video'?[]:undefined});
+    edit({type:'reset',cues:mode==='video'?[]:demoCues,videoTrack:mode==='video'?[]:undefined,sources:{}});
     setDraft(mode==='video'?'':sample);setWide(false);setEffect(mode==='video'?PRESETS.classic:PRESETS.whisper);setSections([]);setShowSections(false);
     setRenderMode('all');setRangeStart('0');setRangeEnd(null);
     removeMedia('audio');removeMedia('video');
     restoredView.current=null;
     timelineFitted.current=true;
     setView(createView(DEMO_SECONDS,trackWidth()));
-    sessionRestoring.current=false;
     if(mode==='video')setInspectorTab('media');
     setError('');setNotice(mode==='video'?'Project video mới. Thêm clip để bắt đầu.':'Đã bắt đầu lại với project mẫu.');
   }
@@ -730,38 +781,42 @@ export default function Studio() {
     // Restore before anything can be written, so a reload never overwrites the
     // session it has not read yet.
     let cancelled=false;
+    const generation=projectGeneration.current;
     void (async()=>{
       try {
         const db=await openStudioDb();
-        if(cancelled)return;
+        if(cancelled){db.close();return;}
         sessionDb.current=db;
         sessionRestoring.current=true;
-        const snapshot=await loadSession(db);
-        if(snapshot && !cancelled) {
-          const {videoTrack}=parseProjectFile(snapshot.record.json);
-          const clips=await loadClipMedia(db,(videoTrack ?? []).map(clip=>clip.mediaId));
-          if(!cancelled)applySession(snapshot,clips);
-        }
+        const snapshot=await loadSession(db,{pruneLegacyOrphans:true});
+        if(cancelled)return;
+        lastSave.current.writeId=snapshot?.writeId ?? null;
+        if(snapshot && generation===projectGeneration.current)applySession(snapshot);
         sessionRestoring.current=false;
+        setSessionReady(true);
         setSessionSavedAt(snapshot?.record.savedAt ?? null);
         const jobId=readJobId();
         if(jobId && !cancelled)void resumeRenderJob(jobId);
       } catch {
         sessionRestoring.current=false;
-        if(!cancelled)setError('Không đọc được project đã lưu trong trình duyệt.');
+        if(!cancelled){setSessionReady(Boolean(sessionDb.current));setError('Không đọc được project đã lưu trong trình duyệt.');}
       }
     })();
-    return ()=>{cancelled=true;};
+    return ()=>{cancelled=true;sessionDb.current?.close();sessionDb.current=null;};
   },[]);
   useEffect(()=>{
-    window.clearTimeout(autosaveTimer.current);
-    autosaveTimer.current=window.setTimeout(()=>void persistSession({}),500);
-    return ()=>window.clearTimeout(autosaveTimer.current);
-  },[cues,effect,sections,showSections,wide,renderMode,rangeStart,rangeEnd,length,videoTrack,expectedMedia]);
+    if(!sessionReady)return;
+    const immediate=handledImmediateSave.current!==saveNow;
+    handledImmediateSave.current=saveNow;
+    if(lastSave.current.content===sessionContent)return;
+    if(immediate){void persistSession();return;}
+    pendingAutosave.current=window.setTimeout(()=>void persistSession(),500);
+    return ()=>window.clearTimeout(pendingAutosave.current);
+  },[sessionReady,sessionContent,saveNow]);
   useEffect(()=>{
     // Zoom and scroll are not worth a write per drag, but they should not be lost
     // when the tab is closed or hidden.
-    const flush=()=>void persistSession({});
+    const flush=()=>{window.clearTimeout(pendingAutosave.current);void persistSession();};
     const onVisibility=()=>{if(document.visibilityState==='hidden')flush();};
     window.addEventListener('pagehide',flush);
     document.addEventListener('visibilitychange',onVisibility);
@@ -777,7 +832,7 @@ export default function Studio() {
     <main className="workspace">
       <section className="viewer min-[781px]:self-start" aria-label="Preview">
         <div className="section-bar"><h2>Preview</h2><span className="badge">{PRESET_LABELS[effect.preset==='web-match'?'web-match':(visibleCues[liveLine]?.effect ?? effect).preset].split(' · ')[0]}</span></div>
-        <div className={'stage '+(wide?'wide':'tall')}>
+        <div className={'stage '+(wide?'wide':'tall')} ref={previewStage}>
           <div style={{position:'relative',width:'100%',aspectRatio:`${project.width} / ${project.height}`}}>
             <Player ref={player} component={Scene} inputProps={inputProps} fps={FPS} durationInFrames={length} compositionWidth={project.width} compositionHeight={project.height} style={{width:'100%',height:'100%'}} controls={false} spaceKeyToPlayOrPause={false} acknowledgeRemotionLicense />
             {(missingLegacyVideo||spans.some(span=>span.startFrame<=frame&&frame<span.endFrame&&missingSources.has(span.mediaId)))&&<div role="status" style={{position:'absolute',top:8,left:8,background:'#140f12',padding:'4px 8px'}}>Thiếu media</div>}
