@@ -1,0 +1,30 @@
+.video-edit-clip {position:absolute; inset-block:1px;}
+.track .video-edit-clip-select {
+  inset:0; width:100%; height:100%; min-width:0; padding-inline:min(5px,8%); border:0;
+  box-shadow:inset 0 0 0 1px #54444c; background:#3c334e; cursor:grab; touch-action:pan-y; user-select:none;
+}
+.track .video-edit-clip-select:active {cursor:grabbing;}
+.track .video-edit-clip-select[aria-pressed="true"] {box-shadow:inset 0 0 0 1px var(--accent);}
+.track .video-edit-clip-select:focus-visible, .track .video-edit-trim:focus-visible {outline-offset:-3px;}
+.video-edit-clip[data-handles] .video-edit-clip-select {padding-inline:16px;}
+.track .video-edit-trim {inset-block:0; width:12px; height:100%; padding:0; border:0; background:transparent; touch-action:none; cursor:ew-resize;}
+.video-edit-trim[data-edge="in"] {left:0;}
+.video-edit-trim[data-edge="out"] {right:0;}
+.video-edit-trim::after {content:""; position:absolute; inset:35% 4px; border-inline:1px solid var(--accent);}
+.video-edit-clip[data-missing] .video-edit-clip-select {
+  display:flex; flex-direction:column; justify-content:center; line-height:1.15;
+  background:repeating-linear-gradient(-45deg,#3a2934 0 5px,#493343 5px 10px);
+}
+.video-edit-clip-name, .video-edit-missing {display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.video-edit-missing {color:var(--accent);}
+.video-edit-controls {display:flex; flex-wrap:wrap; gap:7px 12px; padding-top:8px; font-size:12px;}
+.video-edit-actions, .video-edit-trim-form {display:flex; flex-wrap:wrap; gap:5px; align-items:center; min-width:0; max-width:100%;}
+.video-edit-actions select {max-width:min(20ch,100%);}
+.video-edit-controls :is(button,select,input[type=number]) {min-height:36px; padding:4px 7px;}
+.video-edit-controls button:disabled {cursor:default;}
+.video-edit-trim-form label {display:flex; align-items:center; gap:4px; color:var(--muted);}
+.video-edit-trim-form input {inline-size:8ch; color:var(--ink);}
+.video-edit-relink {color:var(--accent);}
+@media (pointer:coarse) {
+  .video-edit-controls :is(button,select,input[type=number]) {min-height:44px;}
+}

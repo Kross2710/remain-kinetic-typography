@@ -1,8 +1,13 @@
 import type {Effect,LineMotionSettings,SongSection} from './effects.mjs';
+import type {PerspectiveCorners} from './perspective.mjs';
+import type {VideoClip} from './video-track.mjs';
+export type {VideoClip} from './video-track.mjs';
 export type Word = {text:string; start:number; confirmed?:boolean; emphasis?:boolean};
-export type Cue = {text:string; start:number; words:Word[]; effect?:Effect; hook?:boolean; motion?:LineMotionSettings};
+export type CuePerspective = {corners:PerspectiveCorners; aspect:'wide'|'tall'};
+export type CueAttachment = {end:number; segments:{clipId:string; offsetFrames:number}[]};
+export type Cue = {text:string; start:number; words:Word[]; effect?:Effect; hook?:boolean; motion?:LineMotionSettings; perspective?:CuePerspective; attachment?:CueAttachment};
 export type RenderRange = {startFrame:number; endFrame:number};
-export type Project = {width:number; height:number; durationInFrames:number; cues:Cue[]; videoDurationInFrames?:number; renderRange?:RenderRange; effect?:Effect; sections?:SongSection[]; showSections?:boolean};
+export type Project = {width:number; height:number; durationInFrames:number; cues:Cue[]; videoTrack?:VideoClip[]; videoDurationInFrames?:number; renderRange?:RenderRange; effect?:Effect; sections?:SongSection[]; showSections?:boolean};
 export const FPS:number;
 export const MAX_SECONDS:number;
 export const DEMO_SECONDS:number;

@@ -1,14 +1,16 @@
-import {useCallback,useLayoutEffect,useMemo,useRef,useState} from 'react';
+import {useCallback,useLayoutEffect,useMemo,useRef,useState,type ReactNode} from 'react';
 import {createPortal} from 'react-dom';
 import {AbsoluteFill,Html5Audio,OffthreadVideo,Sequence,useCurrentFrame,useDelayRender,useRemotionEnvironment,useVideoConfig} from 'remotion';
 import {bootWebMatch,webMatchDocument} from '../web-match';
 import type {SceneProps} from '../Scene';
 
-export function WebMatch({project,audioSrc,videoSrc}:SceneProps){
+export function WebMatch({project,audioSrc,videoSrc,trackVisible,hasTrackMedia,trackLayer}:SceneProps & {
+  trackVisible:boolean;hasTrackMedia:boolean;trackLayer:ReactNode;
+}){
   const frame=useCurrentFrame();
   const {width,height,fps}=useVideoConfig();
-  const visible=Boolean(videoSrc)&&frame<(project.videoDurationInFrames ?? project.durationInFrames);
-  const videoVisible=Boolean(videoSrc);
+  const visible=trackVisible||(Boolean(videoSrc)&&frame<(project.videoDurationInFrames ?? project.durationInFrames));
+  const videoVisible=Boolean(videoSrc)||hasTrackMedia;
   const config=useMemo(()=>({width,height,durationInFrames:project.durationInFrames,cues:project.cues,sections:project.sections,showSections:project.showSections}),[width,height,project.durationInFrames,project.cues,project.sections,project.showSections]);
   const viewport=useRef<HTMLIFrameElement>(null);
   const driver=useRef<Awaited<ReturnType<typeof bootWebMatch>>|null>(null);
@@ -73,6 +75,7 @@ export function WebMatch({project,audioSrc,videoSrc}:SceneProps){
     {media && videoSrc && createPortal(<Sequence layout="none" durationInFrames={project.videoDurationInFrames ?? project.durationInFrames}>
       <OffthreadVideo className="bgvideo" src={videoSrc} muted={Boolean(audioSrc)} pauseWhenBuffering />
     </Sequence>,media)}
+    {media && hasTrackMedia && createPortal(trackLayer,media)}
     {audioSrc && <Html5Audio src={audioSrc}/>}
     {failure && <div role="alert" style={{color:'white',padding:16}}>{failure}</div>}
   </AbsoluteFill>;

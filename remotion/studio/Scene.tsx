@@ -1,3 +1,4 @@
+import {useMemo} from 'react';
 import {AbsoluteFill,Html5Audio,OffthreadVideo,Sequence,interpolate,interpolateColors,useCurrentFrame,useVideoConfig} from 'remotion';
 import {activeAt,type Cue,type Project} from './project.mjs';
 import {FONT_STACKS,PRESETS,resolveMotion} from './effects.mjs';
@@ -6,10 +7,21 @@ import {WhisperAtmosphere,WhisperLine,WhisperPast} from './components/Whisper';
 import {WebMatch} from './components/WebMatch';
 import {composeWebText} from './components/SharedTextMotion';
 import {SharedLyricFlow} from './components/SharedLyricFlow';
+import {VideoTrack,useVideoTrack} from './components/VideoTrack';
+import {activeSceneCues} from './lyric-attachment.mjs';
+import {perspectiveMatrix3d,type PerspectiveCorners} from './perspective.mjs';
 import {firstWhisperFrame,whisperStack} from './whisper.mjs';
 
-export type SceneProps = {project:Project; audioSrc:string|null; videoSrc:string|null};
+export type SceneProps = {project:Project; audioSrc:string|null; videoSrc:string|null; videoSources?:Record<string,string>};
+const cover={width:'100%',height:'100%',objectFit:'cover'} as const;
+const lyricGrid={position:'absolute',inset:0,display:'grid',placeItems:'center',pointerEvents:'none'} as const;
 const smooth=(x:number)=>{const p=Math.max(0,Math.min(1,x));return p*p*(3-2*p);};
+const lyricPlane={left:.06,top:.37,right:.94,bottom:.63};
+
+export function defaultLyricCorners():PerspectiveCorners {
+  const {left,top,right,bottom}=lyricPlane;
+  return [{x:left,y:top},{x:right,y:top},{x:right,y:bottom},{x:left,y:bottom}];
+}
 
 function LyricLine({cue,project,time,sizeBase,hasVideo,exit,shared}: {cue:Cue;project:Project;time:number;sizeBase:number;hasVideo:boolean;exit?:number;shared?:ReturnType<typeof composeWebText>}) {
   const effect=cue.effect ?? project.effect ?? PRESETS.classic;
@@ -44,42 +56,64 @@ function LyricLine({cue,project,time,sizeBase,hasVideo,exit,shared}: {cue:Cue;pr
   </div>;
 }
 
-export function Scene({project,audioSrc,videoSrc}:SceneProps) {
+export function Scene({project,audioSrc,videoSrc,videoSources}:SceneProps) {
   const frame=useCurrentFrame();
   const {fps,width,height}=useVideoConfig();
   const t=frame/fps;
-  if(project.effect?.preset==='web-match')return <WebMatch project={project} audioSrc={audioSrc} videoSrc={videoSrc}/>;
-  const [line]=activeAt(project.cues,t);
-  const cue=project.cues[line];
+  const entries=useVideoTrack(project.videoTrack,videoSources);
+  const legacyVideo=project.videoTrack===undefined ? videoSrc : null;
+  const trackVisible=entries.some(({startFrame,endFrame})=>frame>=startFrame && frame<endFrame);
+  const songCues=useMemo(()=>project.cues.some(cue=>cue.attachment) ? project.cues.filter(cue=>!cue.attachment) : project.cues,[project.cues]);
+  if(project.effect?.preset==='web-match')return <WebMatch project={project} audioSrc={audioSrc} videoSrc={legacyVideo}
+    trackVisible={trackVisible} hasTrackMedia={entries.length>0} trackLayer={<VideoTrack entries={entries} className="bgvideo"/>}/>;
+  const [line]=activeAt(songCues,t);
+  const cue=songCues[line];
+  const sceneCues=project.videoTrack && songCues!==project.cues
+    ? activeSceneCues(project.cues,project.videoTrack,frame,fps).filter(item=>item.cue.attachment) : [];
+  const hasLyric=Boolean(cue)||sceneCues.length>0;
   const effect=cue?.effect ?? project.effect ?? PRESETS.classic;
   const projectWhisper=project.effect?.preset==='whisper';
   const whisper=projectWhisper;
   const scale=Math.min(width,height);
   const flow=project.effect?.motion?.flow===true;
-  const stack=!flow&&whisper&&cue?whisperStack(project.cues,line,frame,fps):[];
+  const pinActive=flow&&Boolean(cue?.perspective);
+  const stack=!flow&&whisper&&cue?whisperStack(songCues,line,frame,fps):[];
   const sizeBase=scale*.105;
   const duration=project.durationInFrames/fps;
   const glow=25+Math.sin(t*.45)*12;
-  const hasVideo=Boolean(videoSrc);
+  const hasVideo=Boolean(legacyVideo)||trackVisible;
   function draw(index:number,time:number,exit?:number){
-    const target=project.cues[index];
+    return drawCue(songCues[index],time,songCues[index+1]?.start ?? duration,exit);
+  }
+  function drawCue(target:Cue,time:number,end:number,exit?:number){
     const style=target.effect ?? project.effect ?? PRESETS.classic;
     const settings=resolveMotion(project.effect,target.motion);
     const shared=settings.enter||settings.wipe||settings.ink
-      ? composeWebText(target,style,time,project.cues[index+1]?.start ?? duration,settings):undefined;
-    return style.preset==='whisper'
+      ? composeWebText(target,style,time,end,settings):undefined;
+    const lyric=style.preset==='whisper'
       ? <WhisperLine key={target.start} cue={target} effect={style} time={time} scale={scale} hasVideo={hasVideo} past={exit!==undefined} shared={shared}/>
       : <LyricLine key={target.start} cue={target} project={project} time={time} sizeBase={sizeBase} hasVideo={hasVideo} exit={exit} shared={shared}/>;
+    const perspective=target.perspective;
+    if(!perspective)return lyric;
+    const {left,top,right,bottom}=lyricPlane;
+    const transform=perspectiveMatrix3d(perspective.corners.map(p=>({
+      x:(p.x-left)/(right-left),y:(p.y-top)/(bottom-top),
+    })),width*(right-left),height*(bottom-top));
+    if(!transform)return lyric;
+    // Keep the native line's layout (including its measured flow row height).
+    // Solve in the centered lyric plane, not the surrounding full-frame grid.
+    return <div key={target.start} style={{display:'grid',placeItems:'center',gridArea:'1 / 1',width:'100%',position:'relative',
+      zIndex:exit===undefined?1:0,transform,transformOrigin:`${width*left}px calc(50% - ${height*(bottom-top)/2}px)`}}>{lyric}</div>;
   }
   const outgoing: {index:number;lastTime:number;motion:number}[]=[];
   if(!flow && !whisper && cue && effect.preset==='aurora'){
     // Continue the previous line's last rendered pose, not a new plain text line.
-    const whisperHandoff=project.effect?.preset==='whisper' || project.cues.slice(Math.max(0,line-2),line).some(past=>past.effect?.preset==='whisper');
+    const whisperHandoff=project.effect?.preset==='whisper' || songCues.slice(Math.max(0,line-2),line).some(past=>past.effect?.preset==='whisper');
     for(let i=line-1;i>=0;i--){
-      const nextStart=project.cues[i+1].start;
+      const nextStart=songCues[i+1].start;
       const age=t-nextStart;
       if(age>=.9)break;
-      const past=project.cues[i];
+      const past=songCues[i];
       const wasWhisper=(past.effect ?? project.effect)?.preset==='whisper';
       if(i<line-2 && (whisperHandoff || wasWhisper))continue;
       const lastFrame=wasWhisper?firstWhisperFrame(nextStart,fps)-1:Math.ceil(nextStart*fps)-1;
@@ -88,24 +122,30 @@ export function Scene({project,audioSrc,videoSrc}:SceneProps) {
     }
   }
   return <AbsoluteFill style={{background:`radial-gradient(ellipse at ${glow}% 15%, #493044 0%, transparent 53%), radial-gradient(ellipse at 92% 92%, #3a211f 0%, transparent 61%), #140f12`,fontFamily:FONT_STACKS.serif,color:'#ece3d4',display:'grid',placeItems:'center',overflow:'hidden'}}>
-    {videoSrc && <Sequence durationInFrames={project.videoDurationInFrames ?? project.durationInFrames}>
-      <OffthreadVideo src={videoSrc} muted={Boolean(audioSrc)} pauseWhenBuffering style={{width:'100%',height:'100%',objectFit:'cover'}}/>
-      {cue && <AbsoluteFill style={{pointerEvents:'none',background:'linear-gradient(transparent, #100a1066, transparent)'}}/>}
+    {legacyVideo && <Sequence durationInFrames={project.videoDurationInFrames ?? project.durationInFrames}>
+      <OffthreadVideo src={legacyVideo} muted={Boolean(audioSrc)} pauseWhenBuffering style={cover}/>
+      {hasLyric && <AbsoluteFill style={{pointerEvents:'none',background:'linear-gradient(transparent, #100a1066, transparent)'}}/>}
     </Sequence>}
+    <VideoTrack entries={entries} style={cover}/>
+    {trackVisible && hasLyric && <AbsoluteFill style={{pointerEvents:'none',background:'linear-gradient(transparent, #100a1066, transparent)'}}/>}
     {whisper && <WhisperAtmosphere frame={frame} time={t}/>}
     {project.showSections && <SongChrome sections={project.sections ?? []} time={t} duration={duration} scale={scale}/>}
-    {flow && cue ? <SharedLyricFlow cues={project.cues} line={line} frame={frame} fps={fps} height={height} draw={(index,time,past)=>draw(index,time,past?0:undefined)}/> :
-    <div style={{position:'absolute',inset:0,display:'grid',placeItems:'center',pointerEvents:'none'}}>
+    {flow && cue ? <SharedLyricFlow cues={songCues} line={line} frame={frame} fps={fps} height={height} draw={(index,time,past)=>
+      // A pinned line still takes up its original row for history measurements.
+      pinActive&&!past ? <div aria-hidden style={{display:'grid',placeItems:'center',visibility:'hidden'}}>{draw(index,time,0)}</div> : draw(index,time,past?0:undefined)}/> :
+    <div style={lyricGrid}>
       {outgoing.map(({index,lastTime,motion})=>{
-        const past=project.cues[index];
+        const past=songCues[index];
         const pastEffect=past.effect ?? project.effect ?? PRESETS.classic;
         return pastEffect.preset==='whisper'
           ? <WhisperPast key={past.start} scale={scale} pose={{rise:motion*.09,scale:1-motion*.09,opacity:1-motion,blur:motion*4}}>{draw(index,lastTime,0)}</WhisperPast>
           : draw(index,lastTime,motion);
       })}
-      {stack.map(({index,time,pose})=><WhisperPast key={project.cues[index].start} pose={pose} scale={scale}>{draw(index,time,0)}</WhisperPast>)}
+      {stack.map(({index,time,pose})=><WhisperPast key={songCues[index].start} pose={pose} scale={scale}>{draw(index,time,0)}</WhisperPast>)}
       {cue && draw(line,t)}
     </div>}
+    {pinActive && <div style={lyricGrid}>{draw(line,t)}</div>}
+    {sceneCues.map(({cue,index,time,end})=><div key={index} style={lyricGrid}>{drawCue(cue,time,end)}</div>)}
     {audioSrc && <Html5Audio src={audioSrc}/>}
   </AbsoluteFill>;
 }

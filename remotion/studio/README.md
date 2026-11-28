@@ -17,16 +17,29 @@ npm run studio
 Mở `http://127.0.0.1:4317`. Chọn nhạc, dán lời (mỗi câu một dòng) hoặc nhập `.lrc`/Enhanced LRC, rồi bấm **Áp dụng lời**. Bấm **Phát**, rồi dùng **Space**, **T** hoặc nút **Đóng dấu từ** theo nhạc. Studio tự chuyển chữ và chuyển dòng mà không tua; lần chấm chữ đầu đặt lại mốc đầu dòng theo nhịp thật. Khi chọn một dòng bằng tay ở mục canh lời, playhead lùi 0,3 giây để bạn nghe nhịp dẫn vào câu. Đổi tỉ lệ ở góc trên trước khi xuất.
 
 - Xuất MP4 H.264, 30 fps ở 720×1280 hoặc 1280×720; dùng nhạc riêng hoặc âm thanh gốc của video nếu có.
-- Timeline theo thời lượng file dài nhất. Video là lớp nền; nếu có file nhạc riêng, Studio dùng nhạc đó thay cho âm thanh gốc của video. Có thể xoá hết nội dung ô lời rồi áp dụng để xuất không có chữ.
+- Project lời cũ vẫn theo file dài nhất. Video là lớp nền; nếu có file nhạc riêng, Studio dùng nhạc đó thay cho âm thanh gốc của video.
 - Trong **Thiết lập xuất**, chọn **Toàn bộ timeline** hoặc **Một đoạn**, rồi nhập mốc đầu/cuối theo giây hoặc lấy mốc từ playhead. Việc chọn đoạn chỉ ảnh hưởng file xuất, không xoá nội dung khỏi project.
-- Không còn giới hạn 30 giây cho nhạc. Giới hạn bảo vệ host: timeline tối đa 2 giờ, file nhạc 25 MiB, file video 100 MiB. Video nên dùng MP4 (H.264) hoặc WebM mà trình duyệt đọc được.
+- Giới hạn bảo vệ máy: timeline tối đa 2 giờ, nhạc 25 MiB, tổng file video nguồn 100 MiB. Bước chuẩn bị nguồn khi xuất project video còn giới hạn tổng tiền tố nguồn cần giải mã ở 2 giờ và video trung gian ở 512 MiB. Nếu vượt giới hạn, hãy dùng đoạn nguồn ngắn hơn. Video nên dùng MP4 (H.264) hoặc WebM mà trình duyệt đọc được.
 - Preview và export dùng cùng một composition. Khi bấm **Xuất MP4**, file nhạc/video được gửi tới máy chạy Studio để render; preview không gửi file. Server mặc định chỉ bind loopback, chạy một job mỗi lần. Không expose endpoint render ra Internet: chưa có tài khoản, quota hay hàng đợi dùng chung.
 - Inspector có 5 tab. Dùng **Media** để nạp tệp, **Lời** để nhập lời, rồi quay về **Canh từ**. Đổi tab không reset bản nháp hay playhead. Trên desktop, timeline nằm ngay dưới Preview; bấm cue để chọn dòng/tua đến mốc và xem dấu ✓ khi đã canh hết từ.
-- Tab **Project** lưu/nạp JSON; nhạc và video cần được chọn lại khi mở file. Chưa hỗ trợ nhiều lớp video, waveform, tự căn lời hoặc render trực tiếp bên trong trình duyệt.
+- Tab **Project** lưu/nạp JSON; file JSON không nhúng nguồn video hay nhạc. Phiên local tự lưu nguồn trong trình duyệt nếu còn dung lượng. Không có nhiều track video, clip chồng nhau, transition hay render trực tiếp trong trình duyệt.
+
+## Dựng video không cần lời
+
+1. Bấm **Project video mới**, rồi vào **Media → Thêm clip video**. Chọn một hoặc nhiều file; tổng nguồn video tối đa 100 MiB.
+2. Kéo clip trên làn Video để đổi thứ tự. Kéo tay nắm ở hai đầu để trim hoặc nhập khung đầu/cuối của nguồn. Đặt đầu phát trong clip đã chọn, rồi bấm **Tách tại đầu phát**. Clip sau luôn dồn vào clip trước. **Hoàn tác** khôi phục cả thao tác.
+3. Thêm một bản nhạc nền nếu cần. Khi thêm nhạc, Studio tắt tiếng clip theo mặc định. Chọn clip cần giữ tiếng gốc rồi bấm **Bật tiếng clip**. Clip cuối quyết định thời lượng xuất; lời và nhạc còn dư không bị xóa khỏi project.
+4. Xuất MP4, hoặc lưu JSON để mở lại. Clip thiếu nguồn vẫn giữ các điểm cắt và chỉnh được; cần **Liên kết lại nguồn** hoặc xóa clip thiếu mới xuất được.
+
+## Phối cảnh từng dòng
+
+Chọn dòng → **Hiệu ứng → Căn phối cảnh dòng**. Preview tạm dừng; kéo dấu giữa để dời chữ, tay nắm xoay để xoay, hoặc kéo từng góc. Khung tự cắt bị từ chối. **Đặt lại phối cảnh** chỉ đặt lại dòng đang chọn. Đổi ngang/dọc giữ tọa độ và hiện nhắc kiểm tra lại.
+
+**Gắn vào clip** chuyển dòng từ mốc bài hát sang mốc của cảnh chứa dòng. Đổi thứ tự đưa dòng đi cùng cảnh; trim chỉ ẩn phần ngoài đoạn giữ lại; split không phát lại hiệu ứng. **Đưa về lời theo nhạc** bỏ gắn nhưng giữ phối cảnh. Classic, Aurora và Whisper hỗ trợ cách căn này; Web Match không áp dụng phối cảnh hoặc gắn cảnh, không xóa thiết lập đã lưu.
 
 ## Preset chữ và đoạn nhạc
 
-Trong **Hiệu ứng chữ**, chọn **Whisper**, **Classic** (kiểu cũ) hoặc **Aurora**. **Whisper** là mặc định cho project mới; project đã lưu giữ nguyên kiểu cũ. Whisper có nền trôi nhẹ, vignette và grain; dòng đang hát trôi nhẹ, tối đa hai dòng trước thu nhỏ và mờ dần. Chọn một dòng rồi bấm **Đánh dấu hook** để chữ của riêng dòng đó thấm vào theo từng ký tự khi dùng Whisper. Chỉnh font, cỡ, màu chữ, màu nhấn, thời lượng vào và độ trễ giữa các từ. Mặc định áp vào toàn project; chuyển sang **Dòng đang chọn** để tạo kiểu riêng, hoặc bấm **Dùng kiểu mặc định** để bỏ kiểu riêng. Chọn một từ trong panel canh lời trước khi bật nhấn từ.
+Trong **Hiệu ứng chữ**, chọn **Whisper**, **Classic** (kiểu cũ) hoặc **Aurora**. **Whisper** là mặc định cho project mẫu; project video mới dùng **Classic**. Project đã lưu giữ nguyên kiểu cũ. Whisper có nền trôi nhẹ, vignette và grain; dòng đang hát trôi nhẹ, tối đa hai dòng trước thu nhỏ và mờ dần. Chọn một dòng rồi bấm **Đánh dấu hook** để chữ của riêng dòng đó thấm vào theo từng ký tự khi dùng Whisper. Chỉnh font, cỡ, màu chữ, màu nhấn, thời lượng vào và độ trễ giữa các từ. Mặc định áp vào toàn project; chuyển sang **Dòng đang chọn** để tạo kiểu riêng, hoặc bấm **Dùng kiểu mặc định** để bỏ kiểu riêng. Chọn một từ trong panel canh lời trước khi bật nhấn từ.
 
 **Hiện thanh Verse/Chorus trong video** mặc định tắt. Khi bật, tua tới đầu đoạn, chọn loại đoạn rồi thêm mốc tại playhead. Mỗi đoạn kéo dài tới mốc kế tiếp hoặc hết timeline. Tắt thanh không xóa mốc; project JSON lưu cả preset, kiểu riêng, nhấn từ và các mốc đoạn nhạc.
 
@@ -93,6 +106,9 @@ Dùng Tab đến thanh vị trí rồi dùng phím mũi tên để tua bằng b�
 ```sh
 npm run studio:check
 npm run studio:e2e:timeline
+npm run studio:e2e:video        # Studio riêng: dựng ba nguồn, lưu/mở, đo MP4 và âm thanh
+npm run studio:e2e:perspective  # Studio riêng: căn chữ và đối chiếu preview với MP4 tại điểm cắt
+node studio/test/video-source-parity-live.mjs # kiểm tra cắt nguồn 24 fps khớp preview và MP4
 # Chạy server như trên ở terminal khác; kiểm thử E2E cần ffmpeg và ffprobe trong PATH.
 npm run studio:e2e
 npm run studio:e2e:workspace

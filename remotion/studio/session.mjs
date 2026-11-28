@@ -77,71 +77,130 @@ export function buildSessionRecord({project, cues, length, renderRange, media, v
   return {version: SESSION_VERSION, json, savedAt, view: view ?? null, media: mediaNames(media)};
 }
 
-// Blobs are stored one per kind, so a 100 MiB video never has to be re-read to
-// save a lyric edit, and a media file that does not fit the quota is dropped on
-// its own instead of losing the whole session.
-async function storeMedia(db, kind, entry) {
-  const transaction = db.transaction(MEDIA_STORE, 'readwrite');
-  const store = transaction.objectStore(MEDIA_STORE);
-  if (!entry) {
-    store.delete(MEDIA_KEYS[kind]);
-    await transactionComplete(transaction);
-    return {saved: false, quota: false};
-  }
-  store.put({name: entry.name, seconds: entry.seconds, blob: entry.blob}, MEDIA_KEYS[kind]);
+const clipMediaPrefix = 'clip:';
+const stores = [SESSION_STORE, MEDIA_STORE];
+const isClipKey = key => typeof key === 'string' && key.startsWith(clipMediaPrefix);
+const clipIds = record => new Set((JSON.parse(record.json).videoTrack ?? []).map(clip => clip.mediaId));
+
+// Request-level quota errors can be handled without aborting the whole save.
+async function putMedia(store, key, entry) {
   try {
-    await transactionComplete(transaction);
-    return {saved: true, quota: false};
+    return await new Promise(resolve => {
+      const request = store.put(entry, key);
+      request.onsuccess = () => resolve(true);
+      request.onerror = event => {
+        if (isQuotaError(request.error)) event.preventDefault();
+        resolve(false); // non-quota errors still abort the transaction
+      };
+    });
   } catch (error) {
     if (!isQuotaError(error)) throw error;
-    const cleanup = db.transaction(MEDIA_STORE, 'readwrite');
-    cleanup.objectStore(MEDIA_STORE).delete(MEDIA_KEYS[kind]);
-    await transactionComplete(cleanup).catch(() => {});
-    return {saved: false, quota: true};
+    return false;
   }
 }
 
-// `media` omitted means "the files did not change, leave the blobs alone":
-// a lyric edit must not re-read a 100 MiB video.
-export async function saveSession(db, {record, media}) {
-  const failedKinds = [];
-  let quotaExceeded = false;
-  if (media) {
-    for (const kind of MEDIA_KINDS) {
-      const outcome = await storeMedia(db, kind, media[kind] ?? null);
-      if (outcome.quota) {
-        quotaExceeded = true;
-        failedKinds.push(kind);
+// IndexedDB owns exactly one durable snapshot, while each tab owns its live
+// current/Undo/Redo Files. Never publish blobs separately from their project:
+// a reader in another tab observes either the complete old save or the new one.
+// Each writer can re-publish its own live Files even if another tab saved first.
+export async function saveSession(db, {record, media, clips = {}, expectedWriteId}) {
+  const attachments = new Map([...clipIds(record)].map(id => [clipMediaPrefix + id, Object.prototype.hasOwnProperty.call(clips, id) ? clips[id] : null]));
+  if (media) for (const kind of MEDIA_KINDS) attachments.set(MEDIA_KEYS[kind], media[kind] ?? null);
+  const writeId = Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-');
+  let replaced;
+  const write = async (metadataOnly = false) => {
+    const transaction = db.transaction(stores, 'readwrite');
+    const complete = transactionComplete(transaction);
+    // Request failures and transaction aborts are separate promises.
+    void complete.catch(() => {});
+    try {
+      const projects = transaction.objectStore(SESSION_STORE);
+      const blobs = transaction.objectStore(MEDIA_STORE);
+      const previous = await requestResult(projects.get(SESSION_KEY));
+      const previousId = previous?.writeId ?? null;
+      const expected = metadataOnly ? replaced : expectedWriteId;
+      if (expected !== undefined && previousId !== expected) {
+        // Another save won before this view-only update or quota retry.
+        await complete;
+        return {committed: false, writeId: previousId, quotaExceeded: metadataOnly, failedKinds: [], record};
       }
+      replaced = previousId;
+      const versions = new Map(Object.entries(previous?.attachmentVersions ?? {}));
+      const storedMedia = {...record.media};
+      const failedKinds = [];
+      let quotaExceeded = metadataOnly;
+      for (const key of await requestResult(blobs.getAllKeys())) {
+        if (isClipKey(key) && !attachments.get(key)) {
+          blobs.delete(key);
+          versions.delete(key);
+        }
+      }
+      for (const [key, entry] of attachments) {
+        if (entry?.version && versions.get(key) === entry.version) continue;
+        if (entry && !metadataOnly && await putMedia(blobs, key, entry)) {
+          if (entry.version) versions.set(key, entry.version);
+          else versions.delete(key);
+          continue;
+        }
+        if (entry) {
+          quotaExceeded = true;
+          if (MEDIA_KINDS.includes(key)) {
+            failedKinds.push(key);
+            storedMedia[key] = null;
+          }
+        }
+        // Never leave a different tab's blob under the same logical media id.
+        blobs.delete(key);
+        versions.delete(key);
+      }
+      const result = {...record, media: storedMedia};
+      projects.put({...result, writeId, attachmentVersions: Object.fromEntries(versions)}, SESSION_KEY);
+      await complete;
+      return {committed: true, writeId, quotaExceeded, failedKinds, record: result};
+    } catch (error) {
+      try { transaction.abort(); } catch { /* already finished */ }
+      throw await complete.then(() => error, failure => isQuotaError(failure) ? failure : error);
+    }
+  };
+  try {
+    return await write();
+  } catch (error) {
+    // Some browsers report quota at commit, not at the individual put.
+    if (!isQuotaError(error)) throw error;
+    return write(true);
+  }
+}
+
+export async function loadSession(db, {pruneLegacyOrphans = false} = {}) {
+  const transaction = db.transaction(stores, pruneLegacyOrphans ? 'readwrite' : 'readonly');
+  const complete = transactionComplete(transaction);
+  void complete.catch(() => {});
+  const record = await requestResult(transaction.objectStore(SESSION_STORE).get(SESSION_KEY));
+  const blobs = transaction.objectStore(MEDIA_STORE);
+  const hasRecord = typeof record?.json === 'string';
+  const ids = hasRecord ? clipIds(record) : new Set();
+  // Older versions wrote clip blobs before saving a project. Reap those old
+  // orphans without using another tab's (or our own) in-memory project state.
+  if (pruneLegacyOrphans) {
+    for (const key of await requestResult(blobs.getAllKeys())) {
+      if (isClipKey(key) && !ids.has(key.slice(clipMediaPrefix.length))) blobs.delete(key);
     }
   }
-  const storedMedia = {...record.media};
-  for (const kind of failedKinds) storedMedia[kind] = null;
-  const transaction = db.transaction(SESSION_STORE, 'readwrite');
-  transaction.objectStore(SESSION_STORE).put({...record, media: storedMedia}, SESSION_KEY);
-  await transactionComplete(transaction);
-  return {quotaExceeded, failedKinds, record: {...record, media: storedMedia}};
-}
-
-export async function loadSession(db) {
-  const sessionTransaction = db.transaction(SESSION_STORE, 'readonly');
-  const record = await requestResult(sessionTransaction.objectStore(SESSION_STORE).get(SESSION_KEY));
-  if (!record || typeof record.json !== 'string') return null;
-  const media = {audio: null, video: null};
-  const mediaTransaction = db.transaction(MEDIA_STORE, 'readonly');
-  for (const kind of MEDIA_KINDS) {
-    const entry = await requestResult(mediaTransaction.objectStore(MEDIA_STORE).get(MEDIA_KEYS[kind]));
-    if (entry?.blob) media[kind] = {name: entry.name, seconds: entry.seconds, blob: entry.blob};
-  }
-  return {record: {version: record.version ?? SESSION_VERSION, json: record.json, savedAt: record.savedAt ?? null, view: record.view ?? null, media: record.media ?? mediaNames(media)}, media};
+  if (!hasRecord) { await complete; return null; }
+  const [legacy, clips] = await Promise.all([
+    Promise.all(MEDIA_KINDS.map(async kind => [kind, (await requestResult(blobs.get(MEDIA_KEYS[kind]))) ?? null])),
+    Promise.all(Array.from(ids, async id => [id, await requestResult(blobs.get(clipMediaPrefix + id))])),
+  ]);
+  await complete;
+  const media = Object.fromEntries(legacy);
+  return {record: {version: record.version ?? SESSION_VERSION, json: record.json, savedAt: record.savedAt ?? null, view: record.view ?? null, media: record.media ?? mediaNames(media)}, media,
+    clips: Object.fromEntries(clips.filter(([,entry]) => entry?.blob)), writeId: record.writeId ?? null};
 }
 
 export async function clearSession(db) {
-  for (const store of [SESSION_STORE, MEDIA_STORE]) {
-    const transaction = db.transaction(store, 'readwrite');
-    transaction.objectStore(store).clear();
-    await transactionComplete(transaction);
-  }
+  const transaction = db.transaction(stores, 'readwrite');
+  for (const store of stores) transaction.objectStore(store).clear();
+  await transactionComplete(transaction);
 }
 
 // sessionStorage lives exactly as long as the tab, which is the right scope for

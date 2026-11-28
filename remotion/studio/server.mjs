@@ -10,7 +10,8 @@ import {basename, dirname, join, resolve} from 'node:path';
 import {pipeline} from 'node:stream/promises';
 import {fileURLToPath} from 'node:url';
 import express from 'express';
-import {FPS, validateProject} from './project.mjs';
+import {FPS, MAX_SECONDS, clipCues, validateProject} from './project.mjs';
+import {videoTrackFrames} from './video-track.mjs';
 
 const host = '127.0.0.1';
 const serverFile = fileURLToPath(import.meta.url);
@@ -20,6 +21,9 @@ const dist = join(studioRoot, 'dist');
 const hmrPath = '/__studio_hmr';
 const maxAudioBytes = 25 * 1024 * 1024;
 const maxVideoBytes = 100 * 1024 * 1024;
+// Normalized sources coexist until rendering ends. Cap their combined size
+// independently of the upload limit and whether the workspace is RAM-backed.
+const maxTrackStorageBytes = 512 * 1024 * 1024;
 const maxBodyBytes = maxAudioBytes + maxVideoBytes + 1024 * 1024;
 const parseBody = express.raw({type: () => true, limit: maxBodyBytes, inflate: false});
 // The render worker reports progress on its stdout. Remotion logs to stdout
@@ -76,7 +80,7 @@ async function parseUpload(req, res) {
   }
   const fields = new Set();
   for (const key of form.keys()) {
-    if (fields.has(key) || !['project', 'audio', 'video', 'gpu'].includes(key)) {
+    if (fields.has(key) || (!['project', 'audio', 'video', 'gpu'].includes(key) && !key.startsWith('clip-'))) {
       throw new RequestError(400, 'Send one project and at most one audio file and one video file.');
     }
     fields.add(key);
@@ -101,11 +105,50 @@ async function parseUpload(req, res) {
   }
   if (video?.size > maxVideoBytes) throw new RequestError(413, 'Video is limited to 100 MiB.');
   if (video?.size === 0) throw new RequestError(422, 'The video file is empty.');
+  const clipEnds = new Map();
+  if (project.videoTrack !== undefined) {
+    if (video) throw new RequestError(400, 'Use clip files instead of a legacy video for a video track.');
+    const trackFrames = videoTrackFrames(project.videoTrack);
+    if (trackFrames > 0) {
+      if (project.renderRange?.endFrame > trackFrames) {
+        throw new RequestError(400, 'The render range ends after the last video clip.');
+      }
+      if (project.durationInFrames !== trackFrames) {
+        // A saved envelope may extend past the track to retain editable cues.
+        // For the composition, use the same visible timeline as preview.
+        const duration = trackFrames / FPS;
+        project = {...project, durationInFrames: trackFrames, cues: project.effect?.preset==='web-match'?clipCues(project.cues,duration):project.cues,
+          sections: project.sections?.filter(section => section.start < duration)};
+      }
+    }
+    for (const {mediaId, outFrame} of project.videoTrack) {
+      // A tiny trim must not bypass the legacy limit on decoded source length.
+      if (outFrame > MAX_SECONDS * FPS) throw new RequestError(400, 'A video clip exceeds the source preparation limit.');
+      clipEnds.set(mediaId, Math.max(clipEnds.get(mediaId) ?? 0, outFrame));
+    }
+  }
+  const sourcePrepFrames = [...clipEnds.values()].reduce((total, endFrame) => total + endFrame, 0);
+  if (sourcePrepFrames > MAX_SECONDS * FPS) {
+    throw new RequestError(400, 'Video clips exceed the total source preparation limit (2 hours).');
+  }
+  for (const key of fields) {
+    if (key.startsWith('clip-') && !clipEnds.has(key.slice(5))) throw new RequestError(400, 'Unexpected video clip file.');
+  }
+  const clipAssets = new Map();
+  let clipBytes = 0;
+  for (const [mediaId, endFrame] of clipEnds) {
+    const file = form.get(`clip-${mediaId}`);
+    if (!(file instanceof File)) throw new RequestError(400, `Missing video clip file for ${mediaId}.`);
+    if (!file.size) throw new RequestError(422, 'A video clip file is empty.');
+    clipBytes += file.size;
+    if (clipBytes > maxVideoBytes) throw new RequestError(413, 'Video clips are limited to 100 MiB in total.');
+    clipAssets.set(mediaId, {file, endFrame});
+  }
   // Optional: draw the frames with the machine's iGPU. It is a flag, never a path
   // or an executable, so it cannot turn into an argument the server trusts.
   const gpuRaw = form.get('gpu');
   const gpu = gpuRaw === null ? false : ['1', 'true', 'yes'].includes(String(gpuRaw).toLowerCase());
-  return {project, audio, video, gpu};
+  return {project, audio, video, clipAssets, sourcePrepFrames, gpu};
 }
 
 function sendFile(res, filename) {
@@ -151,13 +194,32 @@ function mediaEndSeconds(project) {
   return (project.renderRange?.endFrame ?? project.durationInFrames) / FPS;
 }
 
-async function normalizeVideo(video, project, workspace, signal) {
+const trackStorageError = () => new RequestError(413,
+  'Prepared video clips exceed the storage limit. Try shorter source clips.');
+const videoPrepTimeout = () => new RequestError(504, 'Video preparation timed out.');
+const videoPrepTimeMs = seconds => Math.min(2 * 60 * 60_000, 120_000 + 4000 * seconds);
+
+async function normalizeVideo(video, project, workspace, signal, track) {
   if (video.size === 0) throw new RequestError(422, 'The video file is empty.');
-  const source = join(workspace, 'video-upload');
-  const target = join(workspace, 'video.mp4');
-  const seconds = mediaEndSeconds(project);
+  const isTrack = track !== undefined;
+  const name = isTrack ? `source-${randomUUID()}` : 'video';
+  const source = join(workspace, `${name}-upload`);
+  const target = join(workspace, `${name}.mp4`);
+  const seconds = isTrack ? track.endFrame / FPS : mediaEndSeconds(project);
+  if (track && track.budget.remaining === 0) throw trackStorageError();
   await pipeline(video.stream(), createWriteStream(source), {signal});
   try {
+    const timeoutMs = Math.min(videoPrepTimeMs(seconds), track ? track.budget.deadline - performance.now() : Infinity);
+    if (timeoutMs <= 0) throw videoPrepTimeout();
+    // A fragmented MP4 can be streamed from FFmpeg. Charge every output byte
+    // before writing it so even one oversized source cannot fill the workspace.
+    const writeOutput = track ? stdout => pipeline(stdout, async function* (chunks) {
+      for await (const chunk of chunks) {
+        if (chunk.length > track.budget.remaining) throw trackStorageError();
+        track.budget.remaining -= chunk.length;
+        yield chunk;
+      }
+    }, createWriteStream(target, {flags: 'wx'}), {signal}) : undefined;
     await runProcess('ffmpeg', [
       '-hide_banner', '-loglevel', 'error', '-nostdin', '-xerror', '-abort_on', 'empty_output',
       '-protocol_whitelist', 'file', '-format_whitelist', 'mov,matroska',
@@ -165,13 +227,17 @@ async function normalizeVideo(video, project, workspace, signal) {
       '-map_metadata', '-1', '-map_chapters', '-1', '-t', String(seconds),
       '-filter_threads', '2', '-vf',
       "scale=w='min(1280,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2:reset_sar=1",
-      '-fpsmax', String(FPS), '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-threads:v', '2',
+      // Keep the original presentation grid (including VFR). Remotion samples
+      // it at composition time; resampling here can choose a different frame.
+      ...(isTrack ? ['-fps_mode:v', 'passthrough', '-enc_time_base:v', 'demux'] : ['-fpsmax', String(FPS)]),
+      '-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-threads:v', '2',
       '-maxrate', '4M', '-bufsize', '8M', '-c:a', 'aac', '-b:a', '128k', '-ac', '2', '-ar', '48000',
-      '-movflags', '+faststart', target,
-    ], {workspace, signal, timeoutMs: Math.min(2 * 60 * 60_000, 120_000 + 4000 * seconds)});
+      ...(isTrack ? ['-movflags', '+delay_moov+frag_keyframe+default_base_moof', '-frag_duration', '1000000',
+        '-f', 'mp4', 'pipe:1'] : ['-movflags', '+faststart', target]),
+    ], {workspace, signal, timeoutMs, writeOutput});
   } catch (error) {
-    if (signal.aborted || error.code === 'ENOENT') throw error;
-    if (error.code === 'JOB_TIMEOUT') throw new RequestError(504, 'Video preparation timed out.');
+    if (signal.aborted || error.code === 'ENOENT' || error instanceof RequestError) throw error;
+    if (error.code === 'JOB_TIMEOUT') throw videoPrepTimeout();
     throw new RequestError(422, 'The video file could not be decoded. Try MP4, MOV, WebM or MKV.');
   } finally {
     await rm(source, {force: true});
@@ -180,19 +246,34 @@ async function normalizeVideo(video, project, workspace, signal) {
 }
 
 export async function startStudioServer({port = process.env.PORT ?? 4317,
-  bindHost = process.env.STUDIO_BIND ?? host, lanHost = process.env.STUDIO_LAN_HOST, render = runRenderer,
-  staticRoot = dist, dev = false, outputTtlMs = Number(process.env.STUDIO_RENDER_TTL_MS ?? jobOutputTtlMs)} = {}) {
+  bindHost = process.env.STUDIO_BIND ?? host, lanHost = process.env.STUDIO_LAN_HOST,
+  tailHost = process.env.STUDIO_TAILSCALE_HOST, render = runRenderer,
+  staticRoot = dist, dev = false, outputTtlMs = Number(process.env.STUDIO_RENDER_TTL_MS ?? jobOutputTtlMs),
+  trackStorageBytes = maxTrackStorageBytes} = {}) {
+  if (!Number.isSafeInteger(trackStorageBytes) || trackStorageBytes <= 0 || trackStorageBytes > maxTrackStorageBytes) {
+    throw Error('trackStorageBytes must be a positive integer within the track storage limit.');
+  }
   if (!Number.isFinite(outputTtlMs) || outputTtlMs < 0) throw Error('outputTtlMs must be a non-negative number.');
-  if (bindHost !== host && bindHost !== '0.0.0.0') throw Error('STUDIO_BIND must be 127.0.0.1 or 0.0.0.0.');
-  let lanPeers;
-  if (bindHost === '0.0.0.0') {
-    const iface = Object.values(networkInterfaces()).flat().find(n =>
+  const scoped = bindHost === 'interfaces';
+  if (bindHost !== host && bindHost !== '0.0.0.0' && !scoped) throw Error('STUDIO_BIND must be 127.0.0.1, 0.0.0.0, or interfaces.');
+  if (scoped && dev) throw Error('Scoped interfaces require a production Studio build.');
+  const interfaces = networkInterfaces();
+  let lanPeers, tailPeers;
+  if (bindHost === '0.0.0.0' || (scoped && lanHost)) {
+    const iface = Object.values(interfaces).flat().find(n =>
       n.family === 'IPv4' && n.address === lanHost && !n.internal && n.cidr);
     if (!iface || !/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(lanHost)) {
       throw Error('Set STUDIO_LAN_HOST to a private IPv4 address assigned to this machine.');
     }
     lanPeers = new BlockList();
     lanPeers.addSubnet(lanHost, Number(iface.cidr.split('/')[1]), 'ipv4');
+  }
+  if (scoped && tailHost) {
+    tailPeers = new BlockList();
+    tailPeers.addSubnet('100.64.0.0', 10, 'ipv4');
+    if (!interfaces.tailscale0?.some(n => n.family === 'IPv4' && n.address === tailHost) || !tailPeers.check(tailHost, 'ipv4')) {
+      throw Error('Set STUDIO_TAILSCALE_HOST to the IPv4 address assigned to tailscale0.');
+    }
   }
   if (!/^\d+$/.test(String(port)) || Number(port) > 65535) {
     throw new Error('PORT must be an integer from 0 to 65535.');
@@ -205,7 +286,8 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     const permits = address => authority === `${address}:${boundPort}` || (boundPort === 80 && authority === address);
     const loopback = req.socket.remoteAddress === host && req.socket.localAddress === host && (permits(host) || permits('localhost'));
     const lan = lanPeers && req.socket.localAddress === lanHost && permits(lanHost) && lanPeers.check(req.socket.remoteAddress, 'ipv4');
-    return Boolean(loopback || lan);
+    const tailnet = tailPeers && req.socket.localAddress === tailHost && permits(tailHost) && tailPeers.check(req.socket.remoteAddress, 'ipv4');
+    return Boolean(loopback || lan || tailnet);
   };
   app.use((req, res, next) => {
     if (!allowedLocalRequest(req)) return res.status(403).json({error: 'Studio only accepts requests from its configured local network.'});
@@ -257,8 +339,8 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     job.timer.unref?.();
   };
 
-  const runJob = async (job, {project, audio, video, gpu, localPort}) => {
-    const assets = {};
+  const runJob = async (job, {project, audio, video, clipAssets, sourcePrepFrames, gpu, localPort}) => {
+    const assets = new Map();
     media = assets;
     const report = (update) => {
       if (job.status !== 'running') return;
@@ -268,18 +350,24 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
       });
     };
     try {
-      const prepare = async (kind, file, normalize) => {
+      const prepare = async (kind, file, normalize, track) => {
         if (!file) return null;
-        const path = await normalize(file, project, job.dir, job.controller.signal);
+        const path = await normalize(file, project, job.dir, job.controller.signal, track);
         const id = randomUUID();
-        assets[kind] = {id, path};
+        assets.set(id, {kind, path});
         return `http://${host}:${localPort}/api/internal/${kind}/${id}`;
       };
-      if (audio || video) report({phase: 'prepare'});
+      if (audio || video || clipAssets.size) report({phase: 'prepare'});
       const audioSrc = await prepare('audio', audio, normalizeAudio);
       const videoSrc = await prepare('video', video, normalizeVideo);
+      const clipUrls = [];
+      const budget = {remaining: trackStorageBytes, deadline: performance.now() + videoPrepTimeMs(sourcePrepFrames / FPS)};
+      for (const [id, {file, endFrame}] of clipAssets) {
+        clipUrls.push([id, await prepare('video', file, normalizeVideo, {endFrame, budget})]);
+      }
       const range = project.renderRange;
-      await render({inputProps: {project, audioSrc, videoSrc}, gpu,
+      await render({inputProps: {project, audioSrc, videoSrc,
+        ...(project.videoTrack === undefined ? {} : {videoSources: Object.fromEntries(clipUrls)})}, gpu,
         ...(range ? {frameRange: [range.startFrame, range.endFrame - 1]} : {}),
         outputLocation: job.outputLocation, workspace: job.dir,
         signal: job.controller.signal, report});
@@ -316,8 +404,8 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     const {kind, id} = req.params;
     if (kind !== 'audio' && kind !== 'video') return res.sendStatus(404);
     if (req.socket.remoteAddress !== host || req.socket.localAddress !== host) return res.sendStatus(403);
-    const asset = media?.[kind];
-    if (!asset || id !== asset.id) return res.sendStatus(404);
+    const asset = media?.get(id);
+    if (!asset || kind !== asset.kind) return res.sendStatus(404);
     res.set({'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store'});
     try {
       await sendFile(res, asset.path);
@@ -405,8 +493,14 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
     void runJob(job, {...upload, localPort: req.socket.localPort});
   });
 
-  const server = createServer({headersTimeout: 10_000, requestTimeout: 120_000, connectionsCheckingInterval: 1000}, app);
+  const makeListener = () => createServer({headersTimeout: 10_000, requestTimeout: 120_000, connectionsCheckingInterval: 1000}, app);
+  const server = makeListener();
+  const extraListeners = [];
   server.once('close', () => {
+    for (const listener of extraListeners) {
+      listener.close();
+      listener.closeAllConnections();
+    }
     // A Studio that is going down must not leave Chromium or ffmpeg children of a
     // running job behind, because those jobs no longer have anyone to report to.
     for (const job of jobs.values()) {
@@ -419,10 +513,23 @@ export async function startStudioServer({port = process.env.PORT ?? 4317,
   const vite = dev ? await mountStudioVite(app, server, allowedLocalRequest) : null;
   if (!vite) app.use(express.static(staticRoot));
   try {
-    server.listen(Number(port), bindHost);
+    server.listen(Number(port), scoped ? host : bindHost);
     await once(server, 'listening');
+    if (scoped) {
+      const addresses = [lanPeers ? lanHost : null, tailPeers ? tailHost : null].filter(Boolean);
+      for (const address of addresses) {
+        const listener = makeListener();
+        extraListeners.push(listener);
+        listener.listen(server.address().port, address);
+        await once(listener, 'listening');
+      }
+    }
     return server;
   } catch (error) {
+    if (server.listening) {
+      server.close();
+      server.closeAllConnections();
+    }
     await vite?.close();
     throw error;
   }
@@ -474,14 +581,14 @@ async function runRenderer({inputProps, frameRange, gpu, outputLocation, workspa
   }
 }
 
-function runProcess(command, args, {workspace, signal, timeoutMs, onProgressLine}) {
+function runProcess(command, args, {workspace, signal, timeoutMs, onProgressLine, writeOutput}) {
   signal.throwIfAborted();
   return new Promise((resolve, reject) => {
     const detached = process.platform !== 'win32';
     const child = spawn(command, args, {
       detached,
       env: {...process.env, TMPDIR: workspace, TEMP: workspace, TMP: workspace},
-      stdio: ['ignore', onProgressLine ? 'pipe' : 'ignore', 'pipe'],
+      stdio: ['ignore', onProgressLine || writeOutput ? 'pipe' : 'ignore', 'pipe'],
     });
     let stderr = '';
     let stdoutTail = '';
@@ -518,7 +625,9 @@ function runProcess(command, args, {workspace, signal, timeoutMs, onProgressLine
     const timer = setTimeout(() => stop(Object.assign(new Error('Studio subprocess timed out'), {code: 'JOB_TIMEOUT'})), timeoutMs);
     signal.addEventListener('abort', abort, {once: true});
     child.once('error', (error) => { failure ??= error; });
-    child.once('close', (code) => {
+    const output = writeOutput?.(child.stdout).catch(stop);
+    child.once('close', async (code) => {
+      await output;
       clearTimeout(timer);
       signal.removeEventListener('abort', abort);
       if (failure) reject(failure);
@@ -580,7 +689,12 @@ if (process.argv[1] && resolve(process.argv[1]) === serverFile) {
     }
     const server = await startStudioServer({dev});
     console.log(`Remain Studio${dev ? ' (dev)' : ''}: http://${host}:${server.address().port}`);
-    if (server.address().address === '0.0.0.0') console.log(`Remain Studio LAN: http://${process.env.STUDIO_LAN_HOST}:${server.address().port}`);
+    if (server.address().address === '0.0.0.0' || process.env.STUDIO_BIND === 'interfaces') {
+      if (process.env.STUDIO_LAN_HOST) console.log(`Remain Studio LAN: http://${process.env.STUDIO_LAN_HOST}:${server.address().port}`);
+      if (process.env.STUDIO_BIND === 'interfaces' && process.env.STUDIO_TAILSCALE_HOST) {
+        console.log(`Remain Studio Tailscale: http://${process.env.STUDIO_TAILSCALE_HOST}:${server.address().port}`);
+      }
+    }
     for (const signum of ['SIGINT', 'SIGTERM']) process.once(signum, () => {
       server.close();
       server.closeAllConnections();

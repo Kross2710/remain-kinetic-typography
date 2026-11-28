@@ -153,6 +153,32 @@ test('rejects a DNS-rebound Host even when the Origin matches it', async (t) => 
   assert.equal(response.statusCode, 403);
 });
 
+test('scoped listeners preserve local, LAN and Tailscale addresses without a wildcard', async (t) => {
+  const ifaces = networkInterfaces();
+  const lanHost = Object.entries(ifaces).filter(([name])=>name!=='tailscale0').flatMap(([,entries])=>entries)
+    .find(entry=>entry.family==='IPv4' && !entry.internal && /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(entry.address))?.address;
+  const tailHost = ifaces.tailscale0?.find(entry=>entry.family==='IPv4')?.address;
+  if (!lanHost && !tailHost) return t.skip('No scoped IPv4 interface present');
+  const base = await studio(t,{bindHost:'interfaces',lanHost,tailHost});
+  const port = new URL(base).port;
+  for (const address of [lanHost,tailHost].filter(Boolean)) {
+    const url = `http://${address}:${port}`;
+    const page = await fetch(url);
+    assert.equal(page.status,200);
+    await page.arrayBuffer();
+    const spoofed = await new Promise((resolve,reject)=>{
+      const req=request(url,{headers:{Host:`127.0.0.1:${port}`}},res=>{res.resume();resolve(res.statusCode);});
+      req.on('error',reject);req.end();
+    });
+    assert.equal(spoofed,403);
+    assert.equal((await fetch(`${url}/api/internal/video/test`)).status,403);
+    assert.equal((await post(url,form(),{Origin:base})).status,403);
+    const jobId = await startJob(url,form(),{Origin:url});
+    assert.equal((await waitForStatus(base,jobId,'done')).status,'done');
+  }
+  assert.equal((await fetch(base)).status,200);
+});
+
 test('LAN opt-in binds all IPv4 interfaces but only trusts the selected local authority', async (t) => {
   const {startStudioServer} = await import('../server.mjs');
   await assert.rejects(startStudioServer({port:0,bindHost:'0.0.0.0'}),/private.*IPv4/i);
@@ -276,6 +302,82 @@ test('accepts silent MP4, MOV and WebM uploads as video-only projects', async (t
       assert.deepEqual(bytes, mp4, container);
     });
   }
+});
+
+const sourceClip = (id, mediaId, end) => ({id, mediaId, name: `${mediaId}.mp4`,
+  sourceFrames: end, inFrame: end - 1, outFrame: end, muted: true});
+
+function trackForm(clips, media) {
+  const data = form({...project, cues: [], videoTrack: clips});
+  for (const {mediaId} of clips) data.set(`clip-${mediaId}`, media, 'source.mp4');
+  return data;
+}
+
+async function trackFixture() {
+  const {stdout} = await exec('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i',
+    'testsrc2=s=160x90:r=30:d=0.4', '-c:v', 'libx264', '-threads', '1',
+    '-movflags', '+frag_keyframe+empty_moov', '-f', 'mp4', 'pipe:1'], {encoding: 'buffer'});
+  return new Blob([stdout]);
+}
+
+test('bounds aggregate track preparation by the furthest source frame per media ID before accepting the job', async (t) => {
+  const {FPS, MAX_SECONDS} = await import('../project.mjs');
+  const end = MAX_SECONDS * FPS / 2;
+  const a = sourceClip('clip-a', 'source-a', end);
+  const reuse = sourceClip('clip-reuse', 'source-a', end + 1);
+  const b = sourceClip('clip-b', 'source-b', end);
+  const base = await studio(t);
+  const media = await trackFixture();
+  const refused = await post(base, trackForm([{...a, sourceFrames: end + 1}, reuse, b], media));
+  assert.equal(refused.status, 400, 'Two individually valid sources exceed the aggregate by one frame');
+  assert.match((await refused.json()).error, /preparation limit/i);
+  const accepted = await exportMp4(base, trackForm([a, sourceClip('clip-reuse', 'source-a', end), b], media));
+  assert.deepEqual(accepted.bytes, mp4, 'Reusing Source A at the exact aggregate limit must not charge it twice');
+});
+
+test('keeps variable source presentation timestamps in the normalized track MP4', async (t) => {
+  const {stdout: source} = await exec('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i',
+    'testsrc2=s=160x90:r=24:d=0.5', '-vf', "select='not(eq(mod(n,3),1))'", '-fps_mode', 'passthrough',
+    '-c:v', 'libx264', '-threads', '1', '-movflags', '+frag_keyframe+delay_moov', '-f', 'mp4', 'pipe:1'],
+  {encoding: 'buffer'});
+  const expectedPts = ['0.000000', '0.083333', '0.125000', '0.208333', '0.250000', '0.333333', '0.375000', '0.458333'];
+  const base = await studio(t, {render: async job => {
+    const {stdout} = await exec('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_frames',
+      '-show_entries', 'frame=pts_time', '-of', 'json', job.inputProps.videoSources['source-a']]);
+    assert.deepEqual(JSON.parse(stdout).frames.map(({pts_time}) => pts_time), expectedPts);
+    await render(job);
+  }});
+  const body = trackForm([sourceClip('clip-a', 'source-a', 15)], new Blob([source]));
+  assert.deepEqual((await exportMp4(base, body)).bytes, mp4);
+});
+
+test('stops track preparation before the renderer when distinct normalized sources exceed one byte budget', async (t) => {
+  const media = await trackFixture();
+  const a = sourceClip('clip-a', 'source-a', 12);
+  const b = sourceClip('clip-b', 'source-b', 12);
+  const reuse = sourceClip('clip-reuse', 'source-a', 12);
+  let normalizedBytes;
+  const measure = await studio(t, {render: async job => {
+    const response = await fetch(job.inputProps.videoSources['source-a']);
+    assert.equal(response.status, 200);
+    normalizedBytes = (await response.arrayBuffer()).byteLength;
+    await render(job);
+  }});
+  await exportMp4(measure, trackForm([a], media));
+  assert.ok(normalizedBytes > 1);
+
+  let renders = 0;
+  const base = await studio(t, {trackStorageBytes: normalizedBytes * 2 - 1, render: async job => {
+    renders++;
+    await render(job);
+  }});
+  const id = await startJob(base, trackForm([a, b], media));
+  const failed = await waitForStatus(base, id, 'failed');
+  assert.match(failed.error, /prepared video clips exceed.*storage limit/i);
+  assert.equal(renders, 0);
+  assert.equal((await fetch(`${base}/api/render/jobs/${id}/file`)).status, 409);
+  assert.deepEqual((await exportMp4(base, trackForm([a, reuse], media))).bytes, mp4);
+  assert.equal(renders, 1, 'Reuse one normalized source, and release the job slot after exceeding the cap');
 });
 
 test('passes an inclusive Remotion range without shifting the media or shortening the project', async (t) => {

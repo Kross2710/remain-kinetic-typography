@@ -3,19 +3,25 @@ import {contentWidth,timeToX,xToTime,type View} from '../editor.mjs';
 import {FPS,type Cue} from '../project.mjs';
 import {moveCue,snapTime,trimCue,rulerTicks,visibleCues} from '../timeline.mjs';
 import {useWaveform} from './useWaveform';
+import {VideoClipControls,VideoLane,type VideoEdits} from './VideoLane';
+import {clipSpans} from '../video-track.mjs';
 
 type MediaClip={name:string;seconds:number;src?:string};
 const TOUCH_SLOP=8;
 type Props={
   viewport:RefObject<HTMLDivElement|null>; viewportWidth:number; view:View;
   length:number; frame:number; cues:Cue[]; allCues:Cue[]; liveLine:number; selectedLine:number|null; snapEnabled:boolean;
-  video:MediaClip|null; audio:MediaClip|null;
+  video:MediaClip|null; audio:MediaClip|null; videoEdits?:VideoEdits;
   onScroll:(x:number)=>void; onSeek:(frame:number)=>void; onPickCue:(index:number)=>void; onCommit:(cues:Cue[])=>void;
 };
 
-export function TimelineTracks({viewport,viewportWidth,view,length,frame,cues,allCues,liveLine,selectedLine,snapEnabled,video,audio,onScroll,onSeek,onPickCue,onCommit}:Props) {
+export function TimelineTracks({viewport,viewportWidth,view,length,frame,cues,allCues,liveLine,selectedLine,snapEnabled,video,audio,videoEdits,onScroll,onSeek,onPickCue,onCommit}:Props) {
   const duration=length/FPS;
   const [preview,setPreview]=useState<Cue[]|null>(null);
+  const [videoSelection,setVideoSelection]=useState<string>();
+  const videoClips=videoEdits?.clips;
+  const videoSpans=useMemo(()=>clipSpans(videoClips ?? []),[videoClips]);
+  const selectedVideo=videoSpans.find(c=>c.id===videoSelection) ?? videoSpans.find(c=>c.startFrame<=frame && frame<c.endFrame) ?? videoSpans[0];
   const displayed=preview?.filter(c=>c.start<duration) ?? cues;
   const cueGesture=useRef<{index:number;x:number;original:Cue[];latest:Cue[];moved:boolean;trim:boolean}|null>(null);
   const suppressClick=useRef(false);
@@ -115,7 +121,7 @@ export function TimelineTracks({viewport,viewportWidth,view,length,frame,cues,al
     {kind==='audio' && waveform.map(({x,amplitude},index)=><span key={index} className="waveform-bar" aria-hidden="true" style={{left:x,height:`${Math.max(2,amplitude*32)}px`}}/>)}
   </div>;
 
-  return <div className="timeline-grid">
+  return <><div className="timeline-grid">
     <div className="timeline-labels" aria-hidden="true"><span>Thời gian</span><span>Video</span><span>Nhạc</span><span>Lời</span></div>
     <input id="timeline" aria-label="Vị trí timeline" aria-valuetext={`${(frame/FPS).toFixed(2)} giây`} type="range" min={0} max={length-1} step={1} value={frame} onChange={e=>onSeek(Number(e.target.value))}/>
     <div className="timeline-viewport" ref={viewport} role="region" aria-label="Thước thời gian và các làn"
@@ -128,7 +134,7 @@ export function TimelineTracks({viewport,viewportWidth,view,length,frame,cues,al
           {ticks.map(({x,label})=><span key={x} className={`timeline-tick${label?' major':''}`} style={{left:x}}>{label}</span>)}
         </div>
         <div className="timeline-lanes" onClick={e=>{if (!(e.target as Element).closest('button')) seekAt(e.clientX);}}>
-          {mediaTrack(video,'Chưa có video','video')}
+          {videoEdits?<VideoLane edits={videoEdits} view={view} spans={videoSpans} selected={selectedVideo?.id} onSelect={setVideoSelection}/>:mediaTrack(video,'Chưa có video','video')}
           {mediaTrack(audio,'Chưa có nhạc','audio')}
           <div className="track lyric-track">
             {blocks.map(({index:i,x,width})=>{
@@ -157,5 +163,7 @@ export function TimelineTracks({viewport,viewportWidth,view,length,frame,cues,al
         <div className="timeline-playhead" aria-hidden="true" style={{left:timeToX(frame/FPS,view)}}/>
       </div>
     </div>
-  </div>;
+  </div>
+    {videoEdits && selectedVideo && <VideoClipControls edits={videoEdits} clip={selectedVideo} frame={frame} onSelect={setVideoSelection}/>}
+  </>;
 }
